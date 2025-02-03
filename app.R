@@ -17,7 +17,7 @@ nuc_abundance <- add_column(nuc_abundance, nuc_identifiers, .before = 1) # add g
 
 nuc_abundance[1] # check that this is gene identifiers like it should be
 
-test_gene <- "ostta15g00570" # TEST
+'''test_gene <- "ostta15g00570" # TEST
 
 test_frame <- ((subset(nuc_abundance, Identifier == test_gene)) # extract desired row of data
                %>% pivot_longer(cols = !Identifier, names_to = "Time", values_to = "Abundance")) # make long
@@ -25,7 +25,7 @@ test_frame
 
 g <- ggplot(test_frame) + geom_point(mapping = aes(x = Time, y = Abundance))
 
-g
+g'''
 
 
 # SHINY
@@ -58,13 +58,13 @@ server <- function(input, output) {
     data <- (subset(nuc_abundance, Identifier == input$gene)
       ) %>% pivot_longer(cols = !Identifier, names_to = "Time", values_to = "Abundance")
     
-    data %>% ggplot(aes(x = Time, y = Abundance))  + geom_point() # plot
+    data %>% ggplot(aes(x = Time, y = Abundance)) + geom_point() # plot points
     
   })
   
   output$gene <- renderPrint(
     input$gene
-    )
+    ) # display selected gene
   
 }
 
