@@ -60,29 +60,38 @@ ui <- fluidPage(
               input = "ions", label = "Select ions", selected = NULL,
               choices = c("Ca2+" = "Ca", "K+" = "K", "Mg2+" = "Mg")
             ),
+            radioButtons("abs_rel", label = "Plot abundance as:",
+                         choices = c("Absolute" = "abs", "Relative" = "rel")),
             checkboxInput(input = "ion_raw", label = "Show all values?")
+            
           ),
           
           ### Main page ----
           mainPanel(
+            
+            conditionalPanel(
+              condition = "output.chosen_ions == ''",
+              p("Select one or more ions to get started..")
+            ),
+            
+            # p("Show all values?", textOutput("ion_show_raw")),
+            
             conditionalPanel(
               condition = "input.ions != ''",
-              #p("You have selected:", textOutput("chosen_ions")),
+              # p("test message - will display if graph can display"),
+              # p("You have selected:", textOutput("chosen_ions")),
               withSpinner(plotOutput("ion_graph", width = 600, height = 300)),
-              downloadButton("ion_graph_download", "Download graph view")
+              downloadButton("ion_graph_download", "Download graph view"),
               
               #p("Source: Gil and Crosby, unpublished")
-            ),
+            
             conditionalPanel(
-              condition = "input.ions != ''",
+              condition = "output.ion_show_raw == 'TRUE'",
               downloadButton("ion_table_download", "Download table of values"),
-              withSpinner(tableOutput("ion_table")
-            ),
-            conditionalPanel(
-              condition = "input.ions == ''",
-              p("Select one or more ions to get started..")
+              withSpinner(tableOutput("ion_table")),
             )
-          ))
+            ),
+          )
         )
       ),
 
@@ -149,7 +158,9 @@ server <- function(input, output, session) {
 
   # Ionomics ----
   
-  ## Get values for selected ions ----
+  
+  
+  ## Get values for selected ions to go into graph ----
   ion_data <- reactive({
     req(input$ions)
     ion_data <- select(ions_table, "Time", contains(input$ions)) # create table with all necessary columns
@@ -161,9 +172,14 @@ server <- function(input, output, session) {
     ) # add condition column
     ion_data %>%
       group_by(Time, Condition, Ion) %>%
-      summarise(across(), mean = mean(Abundance), sd = sd(Abundance))
+      summarise(across(), mean = mean(Abundance), sd = sd(Abundance)) %>% 
+      group_by(Ion) %>% mutate(rel_abun = mean/max(mean)) # add other columns
   })
   
+  output$ion_show_raw <- renderText({
+    paste(input$ion_raw)
+    })
+  outputOptions(output, "ion_show_raw", suspendWhenHidden = FALSE)
   
   # get values for selected ions as an output? (may not need)
   output$ion_data <- reactive({
@@ -173,7 +189,11 @@ server <- function(input, output, session) {
   
   # show values for selected ions
   output$ion_table <- renderTable({
+    req(input$ions)
     ion_data()
+    
+    
+    
   })
   
   # show which ions are selected
@@ -183,13 +203,14 @@ server <- function(input, output, session) {
   
   ## Graph of selected ion abundance changes over time ----
   output$ion_graph <- renderPlot({
-    ggplot(data = ion_data(), aes(x = Time, y = mean, group = Ion, colour = Ion)) +
+    ggplot(data = ion_data(), aes(x = Time, y = rel_abun, group = Ion)) +
       ggtitle("Mean ion abundance") +
       geom_stripped_cols(width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff", colour = "grey") +
-      # geom_stripped_cols(width = 12, nudge_x = 6, odd = "darkgray", even = "#ffffff", colour = "black") +
-      geom_point(size = 2) +
-      geom_line(aes(y = mean, group = interaction(Ion, Condition))) +
-      geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
+      #geom_stripped_cols(width = 12, nudge_x = 6, odd = "darkgray", even = "#ffffff", colour = "black") +
+      geom_line(aes(y = rel_abun, group = interaction(Ion, Condition))) +
+      #geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
+      geom_point(size = 2, aes(fill = Ion), shape = 21, colour = "black") +
+      
       theme_bw() +
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       labs(x = "Time (h)", y = "Ion abundance (ug/L)") +
@@ -250,6 +271,8 @@ server <- function(input, output, session) {
       add_column(Condition = "LL")
 
     protein_data <- rbind(protein_data_LD, protein_data_LL) %>% drop_na() # merge two tables together
+    
+    
   })
 
 
@@ -324,5 +347,6 @@ server <- function(input, output, session) {
 
 # Run Shiny app ----
 shinyApp(ui, server)
+#runApp(display.mode = "showcase")
 
 # ///////////////////////////////////////// ----
