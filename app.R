@@ -20,13 +20,16 @@ library(viridis)
 library(writexl)
 
 ## raw files ----
-nuc_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 2) # nuclear-encoded proteome data
-#org_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 3) # organellar-encoded proteome data
-protein_rhythm_pvalues <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx") # pre-calculated eJTK/rain/echo LD and LL p-values
+nuc_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 2, 
+                           na = "ND", .name_repair = function(x) gsub("\\s+", "_", x)) # nuclear-encoded proteome data
+org_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 3,
+                           na = "ND", .name_repair = function(x) gsub("\\s+", "_", x)) # organellar-encoded proteome data
+protein_rhythm_pvalues <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx",
+                                     na = "ND") %>% mutate(across(!Identifier, as.numeric))  # pre-calculated eJTK/rain/echo LD and LL p-values (names don't need fixing here)
 
-head(nuc_proteome) # check nuclear proteome
-#head(org_proteome) # check organellar proteome
-head(protein_rhythm_pvalues) # check rhythmicity values
+nuc_proteome # check nuclear proteome
+org_proteome # check organellar proteome
+protein_rhythm_pvalues # check rhythmicity values
 
 ion_abundance <- read_excel("ions.xlsx", range = "A3:M41", col_names = c(
   "Time",
@@ -35,11 +38,15 @@ ion_abundance <- read_excel("ions.xlsx", range = "A3:M41", col_names = c(
   "K_1", "K_2", "K_3", "K_4"
 )) # ion abundance values - columns aren't named in the actual raw file so that's done here
 
+ion_abundance # check ion abundance values
+
 ion_rhythmicity <- "ion_rhythmicity.xlsx"
 ion_rhythmicity <- ion_rhythmicity %>%
   excel_sheets() %>%
   set_names() %>%
-  map(read_excel, path = ion_rhythmicity) %>% list2env(.GlobalEnv) # load in pre-calculated RAIN and ECHO outputs from excel sheet
+  map(read_excel, path = ion_rhythmicity) %>% 
+  list2env(.GlobalEnv) # load in pre-calculated RAIN and ECHO outputs from excel sheet
+
 
 ## one-time-only processes ----
 
@@ -48,18 +55,22 @@ protein_abundance <- select(nuc_proteome, "Identifier", "0":"24.5", "48":"121.5"
 double_rhythmics <- filter(protein_rhythm_pvalues, LL_rain < 0.05 & LL_echo < 0.05) # find proteins rhythmic in both RAIN and ECHO in LL
 double_rhythmics # preview outcome
 
-double_rhythmics_full <- filter(nuc_proteome, Identifier %in% double_rhythmics$Identifier) %>% # get full information for those proteins
-  select(Identifier, domains = "protein domains", aa_sequence = "Amino acid sequence", abs_phase_LD = "Absolute_Phase_LD", abs_phase_LL = "Absolute_Phase_LL") # filter to just phase/domains/sequence
+double_rhythmics_full <- filter(nuc_proteome, Identifier %in% double_rhythmics$Identifier) # get full information for those proteins
 double_rhythmics_full # preview outcome
 
-# test_rhythmicplot <- select(double_rhythmics_full, "Identifier", "abs_phase_LL") %>% arrange(abs_phase_LL)
-# test_rhythmicplot # get just proteins and phase, for plotting
-# 
-# rhythmic_phase_plot <- ggplot(data = test_rhythmicplot, aes(x = abs_phase_LL)) +
-#   geom_histogram(aes(fill = after_stat(count)), binwidth = 1) +
-#   # geom_col(aes(x = Identifier, y = Absolute_Phase_LL)) +
-#   scale_fill_gradient()
-# ggplotly(rhythmic_phase_plot)
+mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx") # load in list of rhythmic proteins that use Mg as a co-factor
+mg_co_rhythmics
+
+# rhythmic_ion_binders_full <- filter(double_rhythmics_full, 
+#                                Identifier %in% mg_co_rhythmics$Identifier) %>%
+#   select(Identifier, Amino_acid_sequence, description, Absolute_Phase_LL, 
+#          Circadian_Phase_LL, protein_domains, everything()) %>% 
+#   arrange(Absolute_Phase_LL) # get and reorder full table for the 16
+
+rhythmic_ion_binders_full <- filter(double_rhythmics_full, 
+                                    Identifier %in% mg_co_rhythmics$Identifier) # just get 16
+
+rhythmic_ion_binders_full # preview outcome
 
 
 # ///////////////////////////////////////// ----
@@ -102,7 +113,7 @@ ui <- fluidPage(
               condition = "output.chosen_ions == ''",
               p("Select one or more ions to get started..")
             ),
-            
+    
             # p("Show all values?", textOutput("ion_show_raw")),
             conditionalPanel(
               condition = "input.ions != ''",
@@ -118,16 +129,14 @@ ui <- fluidPage(
               ),
               # withSpinner(plotOutput("ion_graph", width = 600, height = 300)),
               downloadButton("ion_graph_download", "Download graph view"),
-              
-              #p("You have selected:", textOutput("ion_rain_echo")),
+    
+              # p("You have selected:", textOutput("ion_rain_echo")),
               tableOutput("ion_rhythm_pvalues"),
-              
               conditionalPanel(
                 condition = "output.ion_show_raw == 'TRUE'",
                 downloadButton("ion_table_download", "Download table of values"),
                 withSpinner(tableOutput("ion_table"))
               )
-              
             )
           )
         )
@@ -139,8 +148,10 @@ ui <- fluidPage(
         sidebarLayout(
           ### Sidebar ----
           sidebarPanel(
-            selectizeInput(input = "proteins", label = "Select up to 5 proteins:", choices = NULL, 
-                           multiple = TRUE, options = list(maxItems = 5)),
+            selectizeInput(
+              input = "proteins", label = "Select up to 5 proteins:", choices = NULL,
+              multiple = TRUE, options = list(maxItems = 5)
+            ),
             radioButtons("protein_abs_rel",
               label = "Plot abundance as:",
               choices = c("Absolute" = "abs", "Relative" = "rel")
@@ -171,7 +182,7 @@ ui <- fluidPage(
               ),
               conditionalPanel(
                 condition = "input.rhythm_method != ''",
-                p("Rhythmicity p-values for:", textOutput("protein_with_desc")),
+                #p("Rhythmicity p-values for: ", textOutput("protein_with_desc", inline = TRUE)),
                 tableOutput("protein_rhythm_pvalues")
               ),
               conditionalPanel(
@@ -185,26 +196,44 @@ ui <- fluidPage(
         )
       ),
     
-      ## Rhythmic proteins ----
+      ## Rhythmic Mg proteins ----
       tabPanel(
-        title = "Rhythmic proteins",
+        title = "Rhythmic Mg2+ binding proteins",
         sidebarLayout(
           ### Sidebar ----
           sidebarPanel(
             selectizeInput(
-              input = "rhythmics", label = "Select up to 5 proteins:", choices = NULL,
-              multiple = TRUE, options = list(maxItems = 5)
+              input = "rhythmics", label = "Select proteins:", choices = NULL,
+              multiple = TRUE
             ),
+            actionButton("rhythmics_go", label = "Go!"),
+            radioButtons("rhythmics_abs_rel",
+              label = "Plot abundance as:",
+              choices = c("Absolute" = "abs", "Relative" = "rel")
+            )
           ),
           ### Main page ----
           mainPanel(
             conditionalPanel(
               condition = "input.rhythmics == ''",
-              p("Select some proteins to get started..")
+              p("Select a protein to get started..")
             ),
             conditionalPanel(
               condition = "input.rhythmics != ''",
-              tableOutput("rhythmics_table")
+              conditionalPanel(
+                condition = "input.rhythmics_abs_rel == 'abs'",
+                withSpinner(plotOutput("rhythmics_graph_abs", width = 700, height = 350))
+              ),
+              conditionalPanel(
+                condition = "input.rhythmics_abs_rel == 'rel'",
+                withSpinner(plotOutput("rhythmics_graph_rel", width = 700, height = 350))
+              ),
+              conditionalPanel(
+                condition = "input.rhythmics != ''",
+                withSpinner(tableOutput("rhythmics_table"))
+              ),
+              # withSpinner(plotOutput("abundance_graph", width = 700, height = 350)),
+              p("Source: Kay et al. Comms Bio 2021")
             )
           )
         )
@@ -235,6 +264,7 @@ server <- function(input, output, session) {
       summarise(across(), mean = mean(Abundance), sd = sd(Abundance)) %>%
       group_by(Ion) %>%
       mutate(rel_abun = mean / max(mean)) # add other/stats columns
+    
   })
 
   # determine if raw values want to be shown (needed for raw values table to be visible)
@@ -277,6 +307,7 @@ server <- function(input, output, session) {
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
       scale_x_break(c(26, 48)) +
+      geom_smooth(aes(colour = Ion, fill = Ion), span = 0.2, se = FALSE) +
       ggborderline::geom_borderline(
         linewidth = 0.5, aes(
           y = mean, colour = Ion,
@@ -286,6 +317,7 @@ server <- function(input, output, session) {
       ) +
       geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
       geom_point(size = 2, aes(x = Time, y = Abundance, group = Ion, fill = Ion), shape = 21, colour = "black") +
+      
       labs(x = "Time (h)", y = "Ion abundance (ug/L)") 
   })
 
@@ -299,6 +331,7 @@ server <- function(input, output, session) {
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
       scale_x_break(c(26, 48)) +
+      geom_smooth(aes(colour = Ion, fill = Ion), span = 0.2, se = FALSE) +
       ggborderline::geom_borderline(
         linewidth = 0.5, aes(colour = Ion, group = interaction(Ion, Condition)),
         bordercolour = "black"
@@ -355,10 +388,8 @@ server <- function(input, output, session) {
 
   # Proteins ----
 
-  ## update inputs  ----
+  ## update input options  ----
   updateSelectizeInput(session, "proteins", choices = c("Select a protein" = "", protein_abundance["Identifier"]), server = TRUE)
-  
-  updateSelectizeInput(session, "rhythmics", choices = c("Select a protein" = "", double_rhythmics["Identifier"]), server = TRUE)
   
 
   # get selected protein from list
@@ -416,6 +447,7 @@ server <- function(input, output, session) {
       # geom_stripped_cols(aes(group = "LD"), width = 12, nudge_x = 6, odd = "#ffffff", even = "#a5a5a5") +
       geom_stripped_cols(aes(group = "LL"), width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff") +
       # geom_line(aes(group = Condition)) +
+      geom_smooth(aes(colour = Identifier, fill = Identifier), span = 0.2, se = FALSE) +
       ggborderline::geom_borderline(
         linewidth = 0.5, aes(
           y = Abundance, colour = Identifier,
@@ -424,6 +456,7 @@ server <- function(input, output, session) {
         bordercolour = "black"
       ) +
       geom_point(size = 2, aes(x = Time, y = Abundance, group = Identifier, fill = Identifier), shape = 21, colour = "black") +
+      
       theme_bw() +
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       labs(x = "Time (h)", y = "Protein abundance") +
@@ -439,6 +472,7 @@ server <- function(input, output, session) {
       # geom_stripped_cols(aes(group = "LD"), width = 12, nudge_x = 6, odd = "#ffffff", even = "#a5a5a5") +
       geom_stripped_cols(aes(group = "LL"), width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff") +
       # geom_line(aes(group = Condition)) +
+      geom_smooth(aes(colour = Identifier, fill = Identifier), span = 0.2, se = FALSE) +
       ggborderline::geom_borderline(
         linewidth = 0.5, aes(
           y = rel_abun, colour = Identifier,
@@ -451,7 +485,8 @@ server <- function(input, output, session) {
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       labs(x = "Time (h)", y = "Relative abundance") +
       scale_x_continuous(breaks = scales::breaks_width(12)) +
-      scale_x_break(c(26, 48))
+      scale_x_break(c(26, 48)) +
+      ylim(NA,1)
   })
 
 
@@ -467,15 +502,97 @@ server <- function(input, output, session) {
       select(Identifier, contains(input$rhythm_method))
   })
 
-  # Rhythmic proteins ----
+# Rhythmic proteins ----
   
+## update input options ----
+  updateSelectizeInput(session, "rhythmics", choices = c("Select a protein" = "", rhythmic_ion_binders_full["Identifier"]), server = TRUE)
+  
+## show table ----  
 output$rhythmics_table <- renderTable({
   req(input$rhythmics)
-  filter(double_rhythmics_full, Identifier %in% (input$rhythmics))  %>% # extract only chosen proteins
-  select(!aa_sequence) # for better printing
+  rhythmics_table <- filter(rhythmic_ion_binders_full, Identifier %in% (input$rhythmics)) %>% 
+    select("Identifier", "description", "Absolute_Phase_LL", "Circadian_Phase_LL")
 })
   
-  # Misc. ----
+## get relevant values, to plot ----
+rhythmics_data <- eventReactive(input$rhythmics_go, {
+  req(input$rhythmics)
+  rhythmics_data <- filter(rhythmic_ion_binders_full, Identifier %in% (input$rhythmics)) %>%
+    select("Identifier", "0":"24.5", "48":"121.5") %>%
+    pivot_longer(
+      cols = -Identifier,
+      names_to = "Time", names_transform = as.numeric,
+      values_to = "Abundance"
+    )
+    rhythmics_data <- mutate(rhythmics_data,
+      Condition = case_when(
+        rhythmics_data$Time <= 24.5 ~ "LD",
+        rhythmics_data$Time >= 48 ~ "LL"
+      ),
+      .after = Time
+    ) 
+    rhythmics_data %>%
+    group_by(Identifier) %>%
+    mutate(rel_abun = Abundance / max(Abundance)) %>%
+    ungroup()
+})
+
+
+
+
+
+## Absolute abundance graph ----
+  output$rhythmics_graph_abs <- renderPlot({
+    ggplot(data = rhythmics_data(), aes(x = Time, y = Abundance, group = Identifier)) +
+      # ggtitle(protein_with_desc()) +
+      ggtitle("Protein abundance") +
+      # geom_stripped_cols(aes(group = "LD"), width = 12, nudge_x = 6, odd = "#ffffff", even = "#a5a5a5") +
+      geom_stripped_cols(aes(group = "LL"), width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff") +
+      # geom_line(aes(group = Condition)) +
+      geom_smooth(aes(colour = Identifier, fill = Identifier), span = 0.2, se = FALSE) +
+      ggborderline::geom_borderline(
+        linewidth = 0.5, aes(
+          y = Abundance, colour = Identifier,
+          group = interaction(Identifier, Condition)
+        ),
+        bordercolour = "black"
+      ) +
+      geom_point(size = 2, aes(x = Time, y = Abundance, group = Identifier, fill = Identifier), shape = 21, colour = "black") +
+      
+      theme_bw() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
+      labs(x = "Time (h)", y = "Protein abundance") +
+      scale_x_continuous(breaks = scales::breaks_width(12)) +
+      scale_x_break(c(26, 48))
+  })
+
+## Relative abundance ----  
+output$rhythmics_graph_rel <- renderPlot({
+  ggplot(data = rhythmics_data(), aes(x = Time, y = rel_abun, group = Identifier)) +
+    # ggtitle(protein_with_desc()) +
+    ggtitle("Relative protein abundance") +
+    # geom_stripped_cols(aes(group = "LD"), width = 12, nudge_x = 6, odd = "#ffffff", even = "#a5a5a5") +
+    geom_stripped_cols(aes(group = "LL"), width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff") +
+    # geom_line(aes(group = Condition)) +
+    #geom_smooth(aes(colour = Identifier, fill = Identifier), span = 0.2, se = FALSE) +
+    ggborderline::geom_borderline(
+      linewidth = 0.5, aes(
+        y = rel_abun, colour = Identifier,
+        group = interaction(Identifier, Condition)
+      ),
+      bordercolour = "black"
+    ) +
+    geom_point(size = 2, aes(x = Time, y = rel_abun, group = Identifier, fill = Identifier), shape = 21, colour = "black") +
+    theme_bw() +
+    theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
+    labs(x = "Time (h)", y = "Relative abundance") +
+    scale_x_continuous(breaks = scales::breaks_width(12)) +
+    scale_x_break(c(26, 48)) +
+    ylim(NA,1)
+})
+  
+  
+# Misc. ----
 
   output$page <- renderText({
     paste("Currently on", input$tabset)
