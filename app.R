@@ -4,13 +4,13 @@
 
 ## libraries ----
 library(bslib)
-library(DT)
+library(DT) # for nicer tables
 library(ggplot2)
 library(ggbreak)
 library(ggstats) # for stripped columns
 library(ggnewscale) # for setting colour palette
 library(shiny)
-library(shinycssloaders)
+library(shinycssloaders) # for spinners
 library(readxl)
 library(tidyverse)
 library(viridis)
@@ -84,191 +84,208 @@ time_shading <- tibble(Time = seq(0, 122, 1)) %>%
     )
   ) %>% drop_na() # set up graph background 
 
+#ion_colours <- c("Mg" = "tomato", "Ca" = "seagreen", "K" = "royalblue") # hard code palette test
 
-ion_colours <- c("Mg" = "red", "Ca" = "green", "K" = "blue")
-ion_colours
-
+protein_history <- c() #initialise blank history
+protein_colour_table <- tibble("Identifier" = NA, "Colour" = NA) # blank
 
 # ///////////////////////////////////////// ----
 # UI ----
 # ///////////////////////////////////////// ----
 
-ui <- fluidPage(
+ui <- page_fillable(
   theme = bs_theme(bootswatch = "flatly"),
   mainPanel(
     textOutput("page"),
+  #  input_dark_mode(id = "mode"), #dark mode toggle
+    card(
     tabsetPanel(
       id = "tabset",
-    
+      
       ## Ion visualisation ----
       tabPanel(
         title = "Ion visualisation",
         sidebarLayout(
           ### Sidebar ----
           sidebarPanel(
-           # style = "position: fixed; overflow-y: auto",
+            # style = "position: fixed; overflow-y: auto",
             card(
-           checkboxGroupInput(
-             input = "ions", label = "Select ions:", selected = NULL,
-             choices = c("Calcium" = "Ca", "Potassium" = "K", "Magnesium" = "Mg")
-           ),
-           radioButtons("ion_abs_rel",
-             label = "Plot abundance as:",
-             choices = c("Absolute" = "abs", "Relative" = "rel")
-           ),
-           radioButtons("ion_rain_echo",
-             label = "Show LL values from:",
-             choices = c("RAIN" = "rain", "ECHO" = "echo")
-           ),
-           actionButton("ion_go", label = "Draw graph")
-           ),
-           checkboxInput(input = "ion_raw", label = "View raw values?")
-         ),
-    
+              checkboxGroupInput(
+                input = "ions", label = "Select ions:", selected = NULL,
+                choices = c("Calcium" = "Ca", "Potassium" = "K", "Magnesium" = "Mg")
+              ),
+              radioButtons("ion_abs_rel",
+                label = "Plot abundance as:",
+                choices = c("Absolute" = "abs", "Relative" = "rel")
+              ),
+              radioButtons("ion_rain_echo",
+                label = "Show LL values from:",
+                choices = c("RAIN" = "rain", "ECHO" = "echo")
+              ),
+              actionButton("ion_go", label = "Draw graph")
+            ),
+            checkboxInput(input = "ion_raw", label = "View raw values?"),
+            selectInput("ion_graph_palette", label = "Select palette",
+                        choices = c("viridis", "magma", "inferno", "plasma",
+                                    "cividis", "rocket", "mako", "turbo"))
+          ),
+          
           ### Main page ----
           mainPanel(
             conditionalPanel(
               condition = "output.chosen_ions == ''",
               p("Select one or more ions to get started..")
             ),
-    
             # p("Show all values?", textOutput("ion_show_raw")),
-            
             conditionalPanel(
               condition = "input.ions != ''",
-              
-                
               # p("test message - will display if graph can display"),
               # p("You have selected:", textOutput("chosen_ions")),
+              card(
               conditionalPanel(
                 condition = "input.ion_abs_rel == 'abs'",
-                withSpinner(plotOutput("ion_graph_abs"))
+                withSpinner(plotOutput("ion_graph_abs")),
+                downloadButton("ion_graph_abs_dl", "Download graph view")
+              
               ),
+              
               conditionalPanel(
                 condition = "input.ion_abs_rel == 'rel'",
-                withSpinner(plotOutput("ion_graph_rel"))
-              ),
-              # withSpinner(plotOutput("ion_graph", width = 600, height = 300)),
-              downloadButton("ion_graph_download", "Download graph view"
-              ),
-    
-              # p("You have selected:", textOutput("ion_rain_echo")),
-            
-              dataTableOutput("ion_rhythm_table"),
-              conditionalPanel(
-                condition = "output.ion_show_raw == 'TRUE'",
-                downloadButton("ion_table_download", "Download table of values"),
-                withSpinner(dataTableOutput("ion_table"))
-              
+                withSpinner(plotOutput("ion_graph_rel")),
+                downloadButton("ion_graph_rel_dl", "Download graph view")
               )
+              ),
+              # withSpinner(plotOutput("ion_graph", width = 600, height = 300))
+            ),
+            # p("You have selected:", textOutput("ion_rain_echo")),
+            dataTableOutput("ion_rhythm_table"),
+            conditionalPanel(
+              condition = "output.ion_show_raw == 'TRUE'",
+              downloadButton("ion_table_dl", "Download table of values"),
+              withSpinner(dataTableOutput("ion_table"))
             )
           )
         )
-      ),
+      
+    ),
     
-      ## Protein visualisation ----
-      tabPanel(
-        title = "Protein visualisation",
-        sidebarLayout(
-          ### Sidebar ----
-          sidebarPanel(
-            selectizeInput(
-              input = "proteins", label = "Select up to 5 proteins:", choices = NULL,
-              multiple = TRUE, options = list(maxItems = 5)
+    ## Protein visualisation ----
+    tabPanel(
+      title = "Protein visualisation",
+      sidebarLayout(
+        ### Sidebar ----
+        sidebarPanel(
+          selectizeInput(
+            input = "proteins", label = "Select up to 5 proteins:", choices = NULL,
+            multiple = TRUE, options = list(maxItems = 5)
+          ),
+          radioButtons("protein_abs_rel",
+            label = "Plot abundance as:",
+            choices = c("Absolute" = "abs", "Relative" = "rel")
+          ),
+          selectInput("protein_graph_palette", label = "Select palette",
+                      choices = c("viridis", "magma", "inferno", "plasma",
+                                  "cividis", "rocket", "mako", "turbo")),
+          actionButton("protein_go", label = "Draw graph"),
+          conditionalPanel(
+            condition = "input.proteins != ''",
+            checkboxGroupInput(
+              input = "rhythm_method", label = "Show rhythmicity p-value?", selected = NULL,
+              choices = c("eJTK" = "ejtk", "RAIN" = "rain", "ECHO" = "echo")
+            )
+          ),
+          textOutput("protein_history")
+        ),
+        
+        ### Main page ----
+        mainPanel(
+          textOutput("protein_colours"),
+          conditionalPanel(
+            condition = "input.proteins == ''",
+            p("Select a protein to get started..")
+          ),
+          conditionalPanel(
+            condition = "input.proteins != ''",
+            card(
+            conditionalPanel(
+              condition = "input.protein_abs_rel == 'abs'",
+              withSpinner(plotOutput("protein_graph_abs")),
+              downloadButton("protein_graph_abs_dl", "Download graph view")
             ),
-            radioButtons("protein_abs_rel",
-              label = "Plot abundance as:",
-              choices = c("Absolute" = "abs", "Relative" = "rel")
+            conditionalPanel(
+              condition = "input.protein_abs_rel == 'rel'",
+              withSpinner(plotOutput("protein_graph_rel")),
+              downloadButton("protein_graph_rel_dl", "Download graph view")
+            )
+            ),
+            conditionalPanel(
+              condition = "input.rhythm_method != ''",
+              # p("Rhythmicity p-values for: ", textOutput("protein_with_desc", inline = TRUE)),
+              dataTableOutput("protein_rhythm_table")
             ),
             conditionalPanel(
               condition = "input.proteins != ''",
-              checkboxGroupInput(
-                input = "rhythm_method", label = "Show rhythmicity p-value?", selected = NULL,
-                choices = c("eJTK" = "ejtk", "RAIN" = "rain", "ECHO" = "echo")
-              )
-            )
-          ),
-          ### Main page ----
-          mainPanel(
-            conditionalPanel(
-              condition = "input.proteins == ''",
-              p("Select a protein to get started..")
+              downloadButton("protein_table_dl", "Download table of values"),
+              dataTableOutput("protein_table")
             ),
-            conditionalPanel(
-              condition = "input.proteins != ''",
-              conditionalPanel(
-                condition = "input.protein_abs_rel == 'abs'",
-                withSpinner(plotOutput("protein_graph_abs"))
-              ),
-              conditionalPanel(
-                condition = "input.protein_abs_rel == 'rel'",
-                withSpinner(plotOutput("protein_graph_rel"))
-              ),
-              conditionalPanel(
-                condition = "input.rhythm_method != ''",
-                #p("Rhythmicity p-values for: ", textOutput("protein_with_desc", inline = TRUE)),
-                dataTableOutput("protein_rhythm_table")
-              ),
-              conditionalPanel(
-                condition = "input.proteins != ''",
-                dataTableOutput("protein_table")
-              ),
-              # withSpinner(plotOutput("abundance_graph")),
-              p("Source: Kay et al. Comms Bio 2021")
-            )
-          )
-        )
-      ),
-    
-      ## Rhythmic Mg proteins ----
-      tabPanel(
-        title = "Rhythmic Mg2+ binding proteins",
-        sidebarLayout(
-          ### Sidebar ----
-          sidebarPanel(
-            selectizeInput(
-              input = "rhythmics", label = "Select proteins:", choices = NULL,
-              multiple = TRUE
-            ),
-            actionButton("rhythmics_go", label = "Draw graph"),
-            radioButtons("rhythmics_abs_rel",
-              label = "Plot abundance as:",
-              choices = c("Absolute" = "abs", "Relative" = "rel")
-            )
-          ),
-          ### Main page ----
-          mainPanel(
-            conditionalPanel(
-              condition = "input.rhythmics == ''",
-              p("Select a protein to get started..")
-            ),
-            conditionalPanel(
-              condition = "input.rhythmics != ''",
-              conditionalPanel(
-                condition = "input.rhythmics_abs_rel == 'abs'",
-                withSpinner(plotOutput("rhythmics_graph_abs")),
-                downloadButton("rhythmics_graph_abs_download", "Download graph view")
-              ),
-              conditionalPanel(
-                condition = "input.rhythmics_abs_rel == 'rel'",
-                withSpinner(plotOutput("rhythmics_graph_rel")),
-                downloadButton("rhythmics_graph_rel_download", "Download graph view"),
-              ),
-              
-              conditionalPanel(
-                condition = "input.rhythmics != ''",
-                downloadButton("rhythmics_table_download", "Download table of values"),
-                withSpinner(dataTableOutput("rhythmics_table"))
-              ),
-              # withSpinner(plotOutput("abundance_graph")),
-              p("Source: Kay et al. Comms Bio 2021")
-            )
+            # withSpinner(plotOutput("abundance_graph")),
+            p("Source: Kay et al. Comms Bio 2021")
           )
         )
       )
-    )
-  )
-)
+    ),
+    
+    ## Rhythmic Mg proteins ----
+    tabPanel(
+      title = "Rhythmic Mg2+ binding proteins",
+      sidebarLayout(
+        ### Sidebar ----
+        sidebarPanel(
+          selectizeInput(
+            input = "rhythmics", label = "Select proteins:", choices = NULL,
+            multiple = TRUE
+          ),
+          actionButton("rhythmics_go", label = "Draw graph"),
+          radioButtons("rhythmics_abs_rel",
+            label = "Plot abundance as:",
+            choices = c("Absolute" = "abs", "Relative" = "rel")
+          )
+        ),
+        ### Main page ----
+        mainPanel(
+          conditionalPanel(
+            condition = "input.rhythmics == ''",
+            p("Select a protein to get started..")
+          ),
+          conditionalPanel(
+            condition = "input.rhythmics != ''",
+            conditionalPanel(
+              condition = "input.rhythmics_abs_rel == 'abs'",
+              withSpinner(plotOutput("rhythmics_graph_abs")),
+              downloadButton("rhythmics_graph_abs_dl", "Download graph view")
+            ),
+            conditionalPanel(
+              condition = "input.rhythmics_abs_rel == 'rel'",
+              withSpinner(plotOutput("rhythmics_graph_rel")),
+              downloadButton("rhythmics_graph_rel_dl", "Download graph view")
+            ),
+            conditionalPanel(
+              condition = "input.rhythmics != ''",
+              downloadButton("rhythmics_table_dl", "Download table of values"),
+              withSpinner(dataTableOutput("rhythmics_table"))
+            ),
+            # withSpinner(plotOutput("abundance_graph")),
+            p("Source: Kay et al. Comms Bio 2021")
+          )
+        ) # mg-binding mainpanel
+      ) # mg-binding sidebarlayout
+    ) # mg-binding tabpanel
+    
+  ) # tabsetpanel
+) # card
+) # mainpanel
+) # ui
+
 
 # ///////////////////////////////////////// ----
 # SERVER ----
@@ -327,12 +344,9 @@ server <- function(input, output, session) {
   ## Graph selected ion abundance changes over time ----
 
   ### Absolute abundance (best for single ions) ----
-  output$ion_graph_abs <- renderPlot({
-    
-    ion_colours <- c("Mg" = "red", "Ca" = "green", "K" = "blue")
-    
+  ion_abs_data <- reactive({
     ggplot(data = ion_data(), aes(x = Time, y = Abundance, group = Ion)) +
-
+      
       geom_rect(data = time_shading,
                 aes(y = NULL, group = NULL,
                     xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, fill = colour), 
@@ -350,8 +364,8 @@ server <- function(input, output, session) {
       ) +
       geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
       geom_point(size = 2, aes(x = Time, y = Abundance, group = Ion, fill = Ion), shape = 21, colour = "black") +
-      scale_colour_manual(values = ion_colours) +
-      scale_fill_manual(values = ion_colours) +
+      scale_colour_manual(values = ion_colours()) +
+      scale_fill_manual(values = ion_colours()) +
       
       theme_bw() +
       theme(plot.title = element_text(face = "bold", hjust = 0.5), 
@@ -363,10 +377,14 @@ server <- function(input, output, session) {
       labs(x = "Time (h)", y = "Ion abundance (ug/L)",
            title = "Ion abundance") 
   })
+  
+  output$ion_graph_abs <- renderPlot({
+    ion_abs_data()
+  })
 
 
   ### Relative abundance (best for multiple ions) ----
-  output$ion_graph_rel <- renderPlot({
+  ion_rel_data <- reactive({
     ggplot(data = ion_data(), aes(x = Time, y = rel_abun, group = Ion)) +
       ggtitle("Ion abundance") +
       theme_bw() +
@@ -388,16 +406,23 @@ server <- function(input, output, session) {
         bordercolour = "black"
       ) +
       geom_point(size = 2, aes(fill = Ion), shape = 21, colour = "black") +
-      scale_colour_manual(values = ion_colours) +
-      scale_fill_manual(values = ion_colours) +
+      scale_colour_manual(values = ion_colours()) +
+      scale_fill_manual(values = ion_colours()) +
       
       labs(x = "Time (h)", y = "Relative ion abundance")
   })
+  
+  output$ion_graph_rel <- renderPlot({
+    ion_rel_data()
+  })
 
   ## Consistent colour palette ----
-  ion_graph_palette <- reactive({
-    
+  ion_colours <- reactive({
+    ion_palette <- viridis(n = 3, option = input$ion_graph_palette) # set up based on user selection
+    ion_colours <- c("Mg" = ion_palette[1], "Ca" = ion_palette[2],"K" = ion_palette[3]) # assign colours specifically to each ion based on current palette, so colours are consistent across plots
   })
+  
+  #output$ion_colours <- renderText({ion_colours()})
   
   ## Rhythmicity display ----
 
@@ -417,7 +442,7 @@ server <- function(input, output, session) {
     } 
     
     ion_rhythm_pvalues
-
+    
   })
 
   output$ion_rhythm_table <- renderDataTable({
@@ -429,45 +454,60 @@ server <- function(input, output, session) {
       formatSignif(-c(1), 5)
   })
   
-  ## Download table values for currently-selected ions ----
-  ion_table_download <- downloadHandler(
-    filename = function() {
-      paste(input$chosen_ions, ".csv", sep = "")
-    },
+  ## Downloads ----
+  
+  ### absolute abundance ----  
+  output$ion_graph_abs_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                                 "-ions_absolute", 
+                                 ".png", 
+                                 sep = "")},
     content = function(file) {
-      write.csv(ion_data(), file)
+      ggsave(file, plot = ion_abs_data(), device = "png",
+             width = 8, height = 5) #this becomes 2400x1500px
     }
   )
-
-  ## Download current ion graph view ----
-  ion_graph_download <- downloadHandler(
-    filename = "graph.png",
+  ### relative abundance ----
+  output$ion_graph_rel_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                                 "-ions_relative", ".png", 
+                                 sep = "")},
     content = function(file) {
-      ggsave(file, plot = ion_graph(), device = ".png")
+      ggsave(file, plot = ion_rel_data(), device = "png",
+             width = 8, height = 5) #this becomes 2400x1500px
     }
+  )
+  ### table of values ----
+  output$ion_table_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")), 
+                                 "-ions", ".tsv", 
+                                 sep = "")},
+    content = function(file) {write_tsv(ion_data(), file)}
   )
 
 
   # Proteins ----
 
   ## update input options  ----
-  updateSelectizeInput(session, "proteins", choices = c("Select a protein" = "", protein_abundance["Identifier"]), server = TRUE)
+  updateSelectizeInput(session, "proteins", 
+                       choices = c("Select a protein" = "", protein_abundance["Identifier"]), 
+                       server = TRUE) # fill options
   
 
-  # get selected protein from list
+  # get selected proteins from list (old)
   protein_with_desc <- reactive({
     req(input$proteins)
     # paste(select(nuc_proteome, Identifier, description) %>% filter(Identifier == input$proteins), collapse = " - ")
   })
 
-  # list selected protein
+  # list selected proteins
   output$protein_with_desc <- reactive({
     req(input$proteins)
     # protein_with_desc()
   })
 
   ## Get relevant values from proteome spreadsheet based on selected protein(s) ----
-  protein_data <- reactive({
+  protein_data <- eventReactive(input$protein_go, {
     req(input$proteins) # wait for proteins to be selected
     
     protein_data <- filter(protein_abundance, Identifier %in% (input$proteins)) # extract only chosen proteins
@@ -477,7 +517,6 @@ server <- function(input, output, session) {
       names_to = "Time", names_transform = as.numeric,
       values_to = "Abundance"
     ) # format to plot
-    
     protein_data <- mutate(protein_data,
       Condition = case_when(
         protein_data$Time <= 24.5 ~ "LD",
@@ -488,6 +527,20 @@ server <- function(input, output, session) {
       ungroup() # add extra columns
   })
 
+  ### store history of selected proteins ----
+  
+  history <- reactiveValues(protein = NULL) # initialise empty list on startup
+  
+  observeEvent(input$protein_go, {
+    history$protein <- unique(c(history$protein, protein_colours())) # update list when graph is drawn
+  })
+  
+  # output list as a test
+  output$protein_history <- renderText({
+    paste(history$protein, collapse = ", ")
+    }) 
+  
+  
   # show more-nicely-formatted table of values for selected protein
   output$protein_table <- renderDataTable({
     protein_data() %>%
@@ -497,10 +550,29 @@ server <- function(input, output, session) {
   })
 
 
-  ## Graph for selected protein ----
+  ## Graph for selected proteins ----
+  
+  ### Consistent colours across plots ----
+  protein_colours <- eventReactive(input$protein_go, {
+    protein_palette <- viridis(n = length(input$proteins), option = input$protein_graph_palette) # set up colours to assign based on user selection
+    
+    for (id_num in 1:length(input$proteins)) {
+      protein_colour_table <- add_row(protein_colour_table,
+                                 Identifier = (input$proteins)[id_num], 
+                                 Colour = protein_palette[id_num]
+                                 ) # create palette one row at a time
+    }
+    protein_colours <- unlist(split(protein_colour_table$Colour, 
+                                    protein_colour_table$Identifier))
+  })
 
+  output$protein_colours <- renderText({
+    protein_colours()
+    })
+  
   ### Absolute abundance ----
-  output$protein_graph_abs <- renderPlot({
+  
+  protein_abs_data <- eventReactive(input$protein_go, {
     ggplot(data = protein_data(), aes(x = Time, y = Abundance, group = Identifier)) +
       # ggtitle(protein_with_desc()) +
       ggtitle("Protein abundance") +
@@ -510,7 +582,7 @@ server <- function(input, output, session) {
                     xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, fill = colour), 
                 show.legend = FALSE) + # set up background
       scale_fill_identity(time_shading$colour) + # shade appropriately
-      new_scale_fill() + # allow rest of graph to use different shading method
+      new_scale_fill() + # allow rest of graph to use a different shading method
       
       geom_smooth(aes(colour = Identifier, fill = Identifier), span = 0.2, se = FALSE) +
       ggborderline::geom_borderline(
@@ -522,15 +594,23 @@ server <- function(input, output, session) {
       ) +
       geom_point(size = 2, aes(x = Time, y = Abundance, group = Identifier, fill = Identifier), shape = 21, colour = "black") +
       
+      scale_colour_manual(values = protein_colours()) +
+      scale_fill_manual(values = protein_colours()) +
+      
       theme_bw() +
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       labs(x = "Time (h)", y = "Protein abundance") +
       scale_x_continuous(breaks = scales::breaks_width(12)) +
       scale_x_break(c(26, 48))
   })
+  
+  output$protein_graph_abs <- renderPlot({
+    protein_abs_data()
+  })
 
   ### Relative abundance ----
-  output$protein_graph_rel <- renderPlot({
+  protein_rel_data <- eventReactive(input$protein_go, {
+    
     ggplot(data = protein_data(), aes(x = Time, y = rel_abun, group = Identifier)) +
       # ggtitle(protein_with_desc()) +
       ggtitle("Relative protein abundance") +
@@ -552,12 +632,19 @@ server <- function(input, output, session) {
       ) +
       geom_point(size = 2, aes(x = Time, y = rel_abun, group = Identifier, fill = Identifier), shape = 21, colour = "black") +
       
+      scale_colour_manual(values = protein_colours()) +
+      scale_fill_manual(values = protein_colours()) +
+      
       theme_bw() +
       theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
       labs(x = "Time (h)", y = "Relative abundance") +
       scale_x_continuous(breaks = scales::breaks_width(12)) +
       scale_x_break(c(26, 48)) +
       ylim(NA,1)
+  })
+  
+  output$protein_graph_rel <- renderPlot({
+    protein_rel_data()
   })
 
 
@@ -589,15 +676,46 @@ server <- function(input, output, session) {
       formatSignif(-c(1), 5)
   })
   
+  ## Downloads ----
   
-# Rhythmic proteins ----
+  ### absolute abundance ----  
+  output$protein_graph_abs_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                                 "-proteins_absolute", 
+                                 ".png", 
+                                 sep = "")},
+    content = function(file) {
+      ggsave(file, plot = protein_abs_data(), device = "png",
+             width = 8, height = 5) #this becomes 2400x1500px
+    }
+  )
+  ### relative abundance ----
+  output$protein_graph_rel_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                                 "-proteins_relative", ".png", 
+                                 sep = "")},
+    content = function(file) {
+      ggsave(file, plot = protein_rel_data(), device = "png",
+             width = 8, height = 5) #this becomes 2400x1500px
+    }
+  )
+  ### table of values ----
+  output$protein_table_dl <- downloadHandler(
+    filename = function() {paste((format(Sys.time(), "%F_%H%M%S")), 
+                                 "-proteins", ".tsv", 
+                                 sep = "")},
+    content = function(file) {
+      write_tsv(protein_data(), file)
+    }
+  )
+
   
+# Rhythmic Mg2+ binding proteins ----
   
 ## update input options ----
   updateSelectizeInput(session, "rhythmics", 
                        choices = c("Select a protein" = "", rhythmic_ion_binders_full["Identifier"]), 
                        server = TRUE)
-  
   
 ## show table ----  
 rhythmics_table <- eventReactive(input$rhythmics_go, {
@@ -635,6 +753,7 @@ rhythmics_data <- eventReactive(input$rhythmics_go, {
     ungroup()
 })
 
+## plot relevant values ----
 
 ### Absolute abundance ----
   rhythmics_abs_data <- eventReactive(input$rhythmics_go, {
@@ -708,22 +827,31 @@ output$rhythmics_graph_rel <- renderPlot({
 ## Downloads ----
 
 ### absolute abundance ----  
-output$rhythmics_graph_abs_download <- downloadHandler(
-  filename = function() {paste(Sys.Date(), "-rhythmics_absolute", ".png", sep = "")},
+output$rhythmics_graph_abs_dl <- downloadHandler(
+  filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                               "-rhythmics_absolute", 
+                               ".png", 
+                               sep = "")},
     content = function(file) {
-      ggsave(file, plot = rhythmics_abs_data(), device = "png")
+      ggsave(file, plot = rhythmics_abs_data(), device = "png",
+             width = 8, height = 5) #this becomes 2400x1500px
     }
 )
 ### relative abundance ----
-output$rhythmics_graph_rel_download <- downloadHandler(
-  filename = function() {paste(Sys.Date(), "-rhythmics_relative", ".png", sep = "")},
+output$rhythmics_graph_rel_dl <- downloadHandler(
+  filename = function() {paste((format(Sys.time(), "%F_%H%M%S")),
+                               "-rhythmics_relative", ".png", 
+                               sep = "")},
   content = function(file) {
-    ggsave(file, plot = rhythmics_rel_data(), device = "png")
+    ggsave(file, plot = rhythmics_rel_data(), device = "png",
+           width = 8, height = 5) #this becomes 2400x1500px
   }
 )
 ### table of values ----
-output$rhythmics_table_download <- downloadHandler(
-  filename = function() {paste(Sys.Date(), "-rhythmics", ".tsv", sep = "")},
+output$rhythmics_table_dl <- downloadHandler(
+  filename = function() {paste((format(Sys.time(), "%F_%H%M%S")), 
+                               "-rhythmics", ".tsv", 
+                               sep = "")},
   content = function(file) {
     write_tsv(rhythmics_table(), file)
   }
@@ -732,7 +860,7 @@ output$rhythmics_table_download <- downloadHandler(
 # Misc. ----
 
   output$page <- renderText({
-    paste("Currently on", input$tabset)
+    paste("Current panel:", input$tabset)
   })
 }
 
