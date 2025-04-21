@@ -1,15 +1,20 @@
 ---
 title: "Plant Science Research Project Notebook"
 author: "Katie Riccio"
-runtime: shiny
 output: 
-  html_notebook: 
-    toc: true
+  html_document:
+    theme: flatly
+    toc: true 
+    toc_float:
+      collapsed: false
+runtime: shiny
 ---
 
 This is my notebook for my honours research project.
 
-# My project code
+# Setup
+
+Loading libraries:
 
 ```{r libraries}
 library(bslib)
@@ -17,6 +22,7 @@ library(echo.find)
 library(ggplot2)
 library(ggbreak)
 library(ggnewscale) # for setting colour palette
+library(ggrepel) # for repelling labels
 library(shiny)
 library(shinycssloaders)
 library(plotly)
@@ -28,9 +34,15 @@ library(writexl)
 library(zoo) # for interpolation
 ```
 
-# 
+Setting global options for the document:
 
-# Setup
+```{r chunk-options, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = FALSE
+)
+```
+
+Creating the time-of-day shading for all subsequent graphs to use:
 
 ```{r time-shading}
 time_shading <- tibble(Time = seq(0, 122, 1)) %>%
@@ -72,12 +84,15 @@ time_graph # test that it works
 
 The deep-coverage proteome data was initially published in [Kay *et al.* (2021)](https://doi.org/10.1038/s42003-021-02680-3), and my tool makes use of the original dataset plus a smaller table of the calculated *p*-values for rhythmicity by eJTK, RAIN, and ECHO under LD and LL conditions.
 
+Loading and viewing initial files:
+
 ```{r load-protein-data}
 nuc_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 2, na = "ND", .name_repair = function(x) gsub("\\s+", "_", x)) # nuclear-encoded proteome data
 
 org_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 3, na = "ND", .name_repair = function(x) gsub("\\s+", "_", x)) # organellar-encoded proteome data
 
-protein_rhythm_pvalues <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx", na = "ND") %>% mutate(across(!Identifier, as.numeric)) # pre-calculated eJTK/rain/echo LD and LL p-values (names don't need fixing here)
+protein_rhythm_pvalues <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx", na = "ND") %>% 
+  mutate(across(!Identifier, as.numeric)) # pre-calculated eJTK/rain/echo LD and LL p-values (names don't need fixing here)
 
 nuc_proteome # check nuclear proteome
 org_proteome # check organellar proteome
@@ -85,6 +100,8 @@ protein_rhythm_pvalues # check rhythmicity values
 ```
 
 Once these were loaded in, I used the pre-calculated *p*-values to extract only the proteins that were identified as rhythmic in LL conditions (with a threshold of *p* \< 0.05) from the full dataset.
+
+Filtering to rhythmic proteins:
 
 ```{r filter-to-rhythmic-proteins}
 double_rhythmic_pvals <- filter(protein_rhythm_pvalues, 
@@ -101,6 +118,8 @@ Of the 6,599 proteins in the original dataset, 951 (14.4%) were identified as rh
 ## Rhythmic proteins with ion-related domains
 
 Within these, I wanted to highlight any rhythmic proteins that may interact with the rhythmic ions in some way, as predicted by having run their amino acid sequences through InterPro.
+
+Identifying rhythmically-abundant proteins with ion-binding protein domains:
 
 ```{r rhythmics-with-ion-domains}
 filter_list <- c("Magnesium", "Mg2\\+", "Potassium", "K\\+") # slashes are needed so the + is processed properly
@@ -124,6 +143,8 @@ However, I wanted to see if there were any more, by examining proteins known to 
 
 For this, I searched on UniProt for all proteins in *Ostreococcus tauri* OTTH0595 that use Mg2+ as a co-factor using its ChEBI number, and downloaded the result as a .tsv file. 146 protein entries were identified in this search.
 
+Loading the .tsv file into R and examining it:
+
 ```{r load-mg-cofactor-table}
 mg_cofactor_table <- read_tsv("uniprotkb_cc_cofactor_chebi_CHEBI_18420_2025_03_13.tsv", name_repair = function(x) gsub("\\s+", "_", x)) # load in table
 mg_cofactor_table
@@ -131,6 +152,8 @@ mg_cofactor_table
 
 To compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
 Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
+
+Creating a list of all gene names and their corresponding amino acid sequences, using the nuclear and organellar proteome datasets from Kay *et al.*:
 
 ```{r lists-of-sequences-identifiers}
 # get lists of gene names and corresponding amino acid sequences from other tables
@@ -143,6 +166,12 @@ org_seqs # should have 75 rows
 
 proteome_seqs <- rbind(nuc_seqs, org_seqs) # combine into one big list for later
 
+```
+
+Extracting list of isolated names and sequences from the Mg2+ cofactor table:
+
+```{r mg-co-identifiers-sequences}
+
 mg_co_seqs <- select(mg_cofactor_table, Gene_Names, Sequence) %>% # get list of 146 sequences from cofactor table
   mutate(Identifier = str_extract(Gene_Names, "OtC.*|ostta.*")) # isolate to ostta or OtC numbers, if they're there
 
@@ -151,6 +180,10 @@ mg_co_seqs # should have 146 rows
 count(mg_co_seqs, Sequence, sort = TRUE) # check every sequence only shows up once
 count(mg_co_seqs, Identifier, sort = TRUE) # 4 sequences lack ostta/OtC numbers
 ```
+
+This highlights that 4 of the sequences in the cofactor table do not have either an ostta\_ or OtC\_ formatted name, so these will need to be filled in by cross-referencing against the proteome datasets.
+
+Combining the lists to fill in the gaps:
 
 ```{r mg-co-join-missing-identifiers}
 mg_co_joined <- left_join(select(mg_co_seqs, !Gene_Names), proteome_seqs,
@@ -168,7 +201,7 @@ mg_co_seqs <- unite(mg_co_joined, Identifier, !Sequence, na.rm = TRUE) %>%
 mg_co_seqs # still at 146, so all the gaps were successfully filled by combining
 ```
 
-Now that I have a cleaner list, I can update the initial table.
+Now that I have a cleaner list, I can update the initial table:
 
 ```{r clean-mg-cofactor-table}
 mg_cofactor_table <- mutate(mg_cofactor_table, Gene_Names = mg_co_seqs$Identifier) %>% rename(Identifier = Gene_Names) # swap old column out for new one
@@ -177,6 +210,8 @@ mg_cofactor_table
 ```
 
 From here, I can now extract the full information for any proteins with Mg2+ as a co-factor that have also been identified as rhythmic in LL, using the ostta numbers.
+
+Finding rhythmically-abundant proteins that use Mg2+ as a co-factor:
 
 ```{r mg-co-find-rhythmics}
 mg_co_rhythmics <- tibble() # initialise blank tibble to add results to
@@ -195,6 +230,8 @@ This identifies 16 proteins that are rhythmic in LL conditions (according to bot
 
 7 of them have descriptions missing, so I ran the sequences against BLAST and took the best result to get one manually.
 
+Manually filling in missing descriptions from BLAST results:
+
 ```{r mg-co-fill-descriptions}
 mg_co_rhythmics$description[mg_co_rhythmics$Identifier == "ostta17g02305"] <- "DeoxyUTP pyrophosphatase"
 
@@ -211,21 +248,110 @@ mg_co_rhythmics$description[mg_co_rhythmics$Identifier == "ostta06g01610"] <- "R
 mg_co_rhythmics$description[mg_co_rhythmics$Identifier == "ostta06g04170"] <- "P-loop containing nucleoside triphosphate hydrolase"
 ```
 
+Comparing filled-in names to the ones originally on the co-factor table:
+
 ```{r mg-co-compare-names, eval=FALSE, include=FALSE}
 full_join(
   (select(mg_co_rhythmics, Identifier, description)),
   (filter(mg_cofactor_table, Identifier %in% mg_co_rhythmics$Identifier) %>% select(Identifier, Protein_names)),
   by = "Identifier"
-) %>% View() # compare filled-in names to initial ones
+) %>% View() # compare filled-in names to initial ones from cofactor table
 ```
 
 ```{r mg-co-blast-arabidopsis, eval=FALSE, include=FALSE}
 print(unlist(c(mg_co_rhythmics$Identifier, mg_co_rhythmics$Amino_acid_sequence)))
 ```
 
-## Presenting as graphs
+## Proteins with K as a co-factor
 
-```{r rhythmic-ion-binders}
+For this, I searched on UniProt for all proteins in *Ostreococcus tauri* OTTH0595 that use K+ as a co-factor using its ChEBI number, and downloaded the result as a .tsv file. 4 protein entries were identified in this search.
+
+Loading in the resultant .tsv file to R:
+
+```{r load-k-cofactor-table}
+k_cofactor_table <- read_tsv("uniprotkb_cc_cofactor_chebi_CHEBI_29103_2025_03_13.tsv", name_repair = function(x) gsub("\\s+", "_", x))
+k_cofactor_table
+```
+
+This shows 4 results. As with the Mg2+ table, to compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
+Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
+
+Checking and correcting the names:
+
+```{r k-sequences-identifiers}
+k_co_seqs <- select(k_cofactor_table, Gene_Names, Sequence) %>% # get list of  sequences from cofactor table
+  mutate(Identifier = str_extract(Gene_Names, "OtC.*|ostta.*")) # isolate to ostta or OtC numbers, if they're there
+
+k_co_seqs # 4
+
+count(k_co_seqs, Sequence, sort = TRUE) # check every sequence only shows up once
+count(k_co_seqs, Identifier, sort = TRUE) # 1 sequence lacks an ostta/OtC number
+```
+
+Using the list from the proteome datasets to fill in the gap:
+
+```{r k-co-get-missing-identifiers}
+k_co_joined <- left_join(select(k_co_seqs, !Gene_Names), proteome_seqs, by = "Sequence", suffix = c("_KCo", "_Proteome")) # join lists together
+
+count(k_co_joined, Identifier_KCo, sort = TRUE) # 1 missing identifier
+count(k_co_joined, Identifier_Proteome, sort = TRUE) # all identifiers in co-factor table are also in kay proteome
+
+k_co_joined
+
+k_co_seqs <- unite(k_co_joined, Identifier, !Sequence, na.rm = TRUE) %>%
+  mutate(Identifier = str_remove(Identifier, "_.*")) # combine columns
+
+k_co_seqs # still at 4, so the missing identifier was successfully filled by combining
+```
+
+Now that I have a cleaner list, I can update the initial table:
+
+```{r clean-k-cofactor-table}
+k_cofactor_table <- mutate(k_cofactor_table, Gene_Names = k_co_seqs$Identifier) %>% rename(Identifier = Gene_Names) # swap old column out for new one
+k_cofactor_table
+```
+
+From here, I can now extract the full information for any proteins with K+ as a co-factor that have also been identified as rhythmic in LL, using the ostta numbers.
+
+```{r k-co-find-rhythmics}
+k_co_rhythmics <- tibble() # initialise blank tibble to add results to
+# already have double_rhythmics from before
+
+for (ostta in k_co_seqs$Identifier) {
+  # cat("Current identifier:",ostta,"\n\n") # test
+  result <- filter(double_rhythmics, Identifier %in% ostta) # get row of table where each cofactor is
+  k_co_rhythmics <- rbind(k_co_rhythmics, result) # add to a table
+}
+
+k_co_rhythmics
+```
+
+This identifies 1 protein that is rhythmic in LL conditions according to both RAIN and ECHO, and also binds K+ as a co-factor - in this case, it is a pyruvate kinase (ostta16g0040), which was already identified in the previous round of analysis because it also binds Mg2+ as a co-factor.
+
+Due to this, I elected not to proceed with the k_co_rhythmics table, as it is contained within the mg_co_rhythmics table.
+
+## Saving/loading results
+
+The tool doesn't need to re-do all of this searching every time it is run, so I will save the results to a file and load them in from that file in the tool.
+
+Saving the mg_co_rhythmics table, containing the name/sequence/description/phases/protein domains, to a file:
+
+```{r save-rhythmic-ion-binders, eval=FALSE, include=FALSE}
+write_xlsx(mg_co_rhythmics, "mg_co_rhythmics.xlsx")
+mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx")
+mg_co_rhythmics
+```
+
+Loading in the same table, containing the name/sequence/description/phases/protein domains, from a different file:
+
+```{r load-rhythmic-ion-binding}
+rhythmic_ion_binders <- read_excel("rhythmic_ion-binders.xlsx", range = "A1:G17")
+rhythmic_ion_binders # this is the same as the mg_co_rhythmics table
+```
+
+Creating a table with the full information from the proteome dataset for each of the rhythmically-abundant proteins that use Mg as a co-factor, hence referred to as rhythmic ion-binders:
+
+```{r rhythmic-ion-binders-full}
 rhythmic_ion_binders_full <- filter(double_rhythmics_full, Identifier %in% mg_co_rhythmics$Identifier) %>%
   select(Identifier, Amino_acid_sequence, description, Absolute_Phase_LL, Circadian_Phase_LL, protein_domains, everything()) %>%
   arrange(Absolute_Phase_LL) # get and reorder full table for the 16
@@ -233,9 +359,306 @@ rhythmic_ion_binders_full <- filter(double_rhythmics_full, Identifier %in% mg_co
 rhythmic_ion_binders_full
 ```
 
-```{r rhythmic-binder-traces}
+------------------------------------------------------------------------
 
+# Ion exploration
+
+The ion abundance data is unpublished. My project focuses on magnesium, calcium, and potassium because these are the ions good-quality data was obtained for. (phosphorus is also in the file, but is not being included in my tool)
+
+Loading in the ion abundance data:
+
+```{r load-ion-data}
+ion_abundance <- read_excel("ions.xlsx", range = "A3:M41", col_names = c(
+  "Time",
+  "Mg_1", "Mg_2", "Mg_3", "Mg_4",
+  "Ca_1", "Ca_2", "Ca_3", "Ca_4",
+  "K_1", "K_2", "K_3", "K_4"
+)) # columns aren't named in the actual raw file so that's done manually here
+ion_abundance <- mutate(ion_abundance, Condition = case_when(Time <= 24 ~ "LD", Time >= 48 ~ "LL"), .after = Time) %>% drop_na() # add condition column
+
+ion_abundance # preview file
 ```
+
+In the tool, the values are loaded in from the spreadsheet once, and then subsections of this table are taken and formatted based on which ions the user chooses in the UI.
+
+UI from the web tool:
+
+```{r shiny-ion-input, eval=FALSE}
+checkboxGroupInput(
+  input = "ions", label = "Select ions:", selected = NULL,
+  choices = c("Calcium" = "Ca", "Potassium" = "K", "Magnesium" = "Mg")
+)
+
+radioButtons("ion_abs_rel",
+  label = "Plot abundance as:",
+  choices = c("Absolute" = "abs", "Relative" = "rel")
+)
+
+checkboxInput(input = "ion_raw", label = "View raw values?")
+
+radioButtons("ion_rain_echo",
+  label = "Show LL values from:",
+  choices = c("RAIN" = "rain", "ECHO" = "echo")
+)
+```
+
+Server-side formatting from the tool:
+
+```{r shiny-ion-data, eval=FALSE}
+ion_data <- reactive({
+  req(input$ions) # wait for an ion to be selected
+  ion_data <- select(ion_abundance, "Time", contains(input$ions)) # create table with all necessary columns
+  ion_data <- pivot_longer(ion_data, cols = !Time, names_to = "Ion", values_to = "Abundance") %>% drop_na()
+  ion_data$Ion <- str_remove(ion_data$Ion, "\\_.*") # clean up ion names
+  ion_data <- mutate(ion_data,
+    Condition = case_when(ion_data$Time <= 24 ~ "LD", ion_data$Time >= 48 ~ "LL"),
+    .after = Time
+  ) # add condition column
+  ion_data <- ion_data %>%
+    group_by(Time, Condition, Ion) %>%
+    summarise(across(), mean = mean(Abundance), sd = sd(Abundance)) %>%
+    group_by(Ion) %>%
+    mutate(rel_abun = mean / max(mean)) # add other/stats columns
+})
+```
+
+## Abundance visualisation
+
+The tool allows the change in abundance of each of the ions over time to be viewed on a graph.
+
+### Absolute abundance
+
+This works best when only one ion is being plotted.
+
+```{r plot-ion-absolute, eval=FALSE}
+ion_graph_abs <- ggplot(data = ion_data(), aes(x = Time, y = Abundance, group = Ion)) +
+  ggtitle("Ion abundance") +
+  geom_stripped_cols(width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff", colour = "grey") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
+  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
+  scale_x_break(c(26, 48)) +
+  ggborderline::geom_borderline(
+    linewidth = 0.5, aes(
+      y = mean, colour = Ion,
+      group = interaction(Ion, Condition)
+    ),
+    bordercolour = "black"
+  ) +
+  geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
+  geom_point(size = 2, aes(x = Time, y = Abundance, group = Ion, fill = Ion), shape = 21, colour = "black") +
+  labs(x = "Time (h)", y = "Ion abundance (ug/L)")
+
+ion_graph_abs
+```
+
+### Relative abundance
+
+This is better for plotting multiple ions on the same graph.
+
+```{r plot-ion-relative, eval=FALSE}
+ggplot(data = ion_data(), aes(x = Time, y = rel_abun, group = Ion)) +
+  ggtitle("Ion abundance") +
+  geom_stripped_cols(width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff", colour = "grey") +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
+  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
+  scale_x_break(c(26, 48)) +
+  ggborderline::geom_borderline(
+    linewidth = 0.5, aes(colour = Ion, group = interaction(Ion, Condition)),
+    bordercolour = "black"
+  ) +
+  geom_point(size = 2, aes(fill = Ion), shape = 21, colour = "black") +
+  labs(x = "Time (h)", y = "Relative ion abundance")
+```
+
+## Calculation of rhythmicity
+
+### RAIN
+
+The RAIN method of detecting rhythmicity was implemented using the `rain()` function, from the package of the same name.
+
+RAIN requires a time series to be given as a matrix, with time points as rows and sample series as columns (replicates are on subsequent rows). This is not the original layout of the ion table, so some pivoting is required first.
+
+Formatting the ion abundance table for RAIN:
+
+```{r ions-rain-table}
+ions_rain_table <- pivot_longer(ion_abundance, cols = -c(Time, Condition), names_to = "Ion", values_to = "Abundance") %>%
+  separate_wider_delim(cols = "Ion", delim = "_", names = c("Ion", "Replicate")) %>%
+  pivot_wider(names_from = Ion, values_from = Abundance) %>%
+  select(-Replicate) # get values in necessary format
+ions_rain_table
+```
+
+Once the data is arranged in the correct format, it can then go into the `rain()` function. All parameters were kept the same as those applied to the proteome in [Kay *et al.* (2021)](https://doi.org/10.1038/s42003-021-02680-3), to better facilitate comparison of the results, except where changes were necessary to reflect differences in sampling (i.e. `deltat = 2` because the ion abundance samples were taken 2 hours apart, and `nr.series = 4` because there are 4 replicates for each ion).
+
+Running RAIN on the ion abundance data:
+
+```{r run-rain-for-ions, eval=FALSE}
+# NB: this takes ages to run for some reason
+
+ions_rain_LD <- filter(ions_rain_table, Condition == "LD") %>%
+  select(-c(Time, Condition)) %>%
+  as.matrix() %>%
+  rain(
+    period = 24, period.delta = 0, method = "independent", # only 24-hour periods
+    deltat = 2, nr.series = 4, verbose = TRUE
+  ) %>% rownames_to_column("Ion")  # matches paper for proteome
+
+ions_rain_LL <- filter(ions_rain_table, Condition == "LL") %>%
+  select(-c(Time, Condition)) %>%
+  as.matrix() %>%
+  rain(
+    period = 24, period.delta = 4, method = "longitudinal", # 22-28 hour periods
+    deltat = 2, nr.series = 4, verbose = TRUE
+  ) %>% rownames_to_column("Ion") # matches paper for proteome
+
+ions_rain_LD
+ions_rain_LL
+```
+
+This has identified all three ions as rhythmic in both LD and LL, interestingly enough, though Ca is much less than the other two (which makes sense).\
+Peak shape refers to the number of time points in the falling part of the oscillation - more sine-shaped oscillations will have more balanced peak shapes, but a sawtooth with a long rising and short falling shape would have a lower peak shape number.
+
+### ECHO
+
+The ECHO method was implemented using the `echo.find()` function, from the package of the same name.
+
+ECHO requires sample series to be in rows, with replicates ordered by time point as columns. The original table is not in this format, so some initial pivoting is required first.
+
+Formatting the ion abundance table for ECHO:
+
+```{r ions-echo-table}
+ions_echo_table <- pivot_longer(ion_abundance, cols = -c(Time, Condition), names_to = "Ion", values_to = "Abundance") %>%
+  drop_na() %>%
+  separate_wider_delim(cols = "Ion", delim = "_", names = c("Ion", "Replicate")) %>%
+  select(-Condition) %>%
+  pivot_wider(names_from = c("Time", "Replicate"), values_from = c("Abundance")) # get values in right format
+
+ions_echo_table
+```
+
+Once the data is in the correct format for ECHO, the function can be run on the LD and LL data. All parameters were kept the same as those known to have been applied to the proteome in [Kay *et al.* (2021)](https://doi.org/10.1038/s42003-021-02680-3) to better facilitate comparison of the results, except where changes were necessary to reflect differences in sampling (i.e. `resol = 2` because the ion abundance samples were taken 2 hours apart, `num_reps = 4` because there are 4 replicates for each ion).
+
+Running ECHO on the ion abundance data:
+
+```{r run-echo-for-ions}
+ions_echo_LD <- select(ions_echo_table, Ion, "0_1":"24_4") %>%
+  echo_find(
+    begin = 0, end = 24, resol = 2, num_reps = 4, low = 24, high = 24, run_all_per = FALSE,
+    paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, is_de_linear_trend = FALSE,
+    is_smooth = FALSE
+  ) %>%
+  rename(Ion = "Gene Name") # run echo for relevant time points
+
+ions_echo_LL <- select(ions_echo_table, Ion, "48_1":"96_4") %>%
+  echo_find(
+    begin = 48, end = 96, resol = 2, num_reps = 4, low = 20, high = 28, run_all_per = FALSE,
+    paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, is_de_linear_trend = TRUE,
+    is_smooth = FALSE
+  ) %>%
+  rename(Ion = "Gene Name") # run echo for relevant time points
+
+ions_echo_LD
+ions_echo_LL
+
+select(ions_echo_LD, "Ion", "Oscillation Type", "Period", "P-Value":"BY Adj P-Value") # view results
+select(ions_echo_LL, "Ion", "Oscillation Type", "Period","P-Value":"BY Adj P-Value") # view results
+```
+
+This has identified K as most significantly rhythmic in LD conditions, followed by Ca (and determines that Mg is not significantly rhythmic in LD at the *p* \< 0.05 threshold). Mg and Ca are assigned a repressed oscillation type (where the amplitude decreases considerably over time), while K is labelled a harmonic oscillation (where amplitude remains mostly the same over time).\
+Conversely, all three ions are once again identified as rhythmic in LL conditions (except Ca but only when the *p*-value is adjusted using the BY method), though much more significantly for Mg and K versus Ca. Mg and K are assigned a damped oscillation type, where the amplitude of the rhythm decreases with time, while Ca is assigned an overexpressed oscillation type, which is the opposite (amplitude increases with time, to the point ECHO no longer counts it as circadian). The period of Mg is longer than Ca or K.
+
+ECHO fits the original time points to the assigned oscillation type's differential equation, so I want to see how this fit is different to the original samples.
+
+Extracting the "original" and "fit" ion abundance data from ECHO:
+
+```{r echo-fit-data}
+ions_echo_LL_ori <- select(ions_echo_LL, "Ion", starts_with("Original")) %>% rename_with(~ str_remove(., "Original TP"), everything()) %>% # get relevant columns
+  pivot_longer(cols = !"Ion", names_to = "Time", values_to = "Abundance")
+# This has 4 rows per time point, so I need to get the mean
+ions_echo_LL_ori$Time <- str_remove(ions_echo_LL_ori$Time, "\\..*")
+ions_echo_LL_ori <- ions_echo_LL_ori %>%
+  group_by(Ion, Time) %>%
+  summarise(across(), mean = mean(Abundance)) %>%
+  distinct(Ion, Time, mean) %>%
+  pivot_wider(names_from = "Ion", values_from = "mean") %>%
+  ungroup() # pivot to plot
+
+
+ions_echo_LL_fit <- select(ions_echo_LL, "Ion", starts_with("Fitted")) %>%
+  rename_with(~ str_remove(., "Fitted TP"), everything()) %>% # get relevant columns
+  pivot_longer(cols = !"Ion", names_to = "Time", values_to = "Abundance") %>%
+  pivot_wider(names_from = "Ion", values_from = "Abundance") # pivot to plot
+
+ions_echo_LL_ori
+ions_echo_LL_fit
+```
+
+Plotting the abundance values on a graph:
+
+```{r plot-echo-fit-data}
+ions_echo_LL_to_plot <- left_join(ions_echo_LL_ori, ions_echo_LL_fit,
+  by = "Time",
+  suffix = c("_Original", "_Fitted")
+)
+ions_echo_LL_to_plot
+
+echo_plot_data <- ions_echo_LL_to_plot %>% 
+  pivot_longer(cols = !Time, names_to = "Ion", values_to = "Abundance") %>%
+  separate_wider_delim(cols = Ion, delim = "_", names = c("Ion", "Status")) %>%
+  group_by(Ion, Status) %>%
+  mutate(zero_one = ((Abundance - min(Abundance)) /
+    (max(Abundance) - min(Abundance))))
+
+echo_plot_data
+
+echo_plot <- ggplot(data = echo_plot_data, 
+                    aes(x = Time, y = zero_one, group = interaction(Ion, Status),
+                    colour = Ion)) +
+  geom_line(linewidth = 0.8) +
+  geom_point() +
+  geom_point(colour = "black", shape = 21)
+
+echo_plot
+```
+
+### Saving/loading results
+
+For the Shiny tool, I have chosen to save these calculated rhythmicity values for the ions to their own Excel spreadsheet (similar to the one that exists for the proteome), as they do not need to be re-calculated every time the tool is launched.
+
+Saving ion rhythmicity values to an Excel file:
+
+```{r save-ion-rhythmicity, eval=FALSE}
+ion_rhythmicity <- list(ions_rain_LD, ions_rain_LL, ions_echo_LD, ions_echo_LL) # get values as list
+names(ion_rhythmicity) <- c("ions_rain_LD", "ions_rain_LL", "ions_echo_LD", "ions_echo_LL")
+write_xlsx(ion_rhythmicity, "ion_rhythmicity.xlsx") # write each table of values to its own sheet
+```
+
+These are then loaded in from this spreadsheet when the tool is first launched, in a similar way to the protein datasets.
+
+Loading ion rhythmicity values from the Excel file:
+
+```{r load-ion-rhythmicity}
+ion_rhythmicity <- "ion_rhythmicity.xlsx" # set file name in tool
+ion_rhythmicity <- ion_rhythmicity %>%
+  excel_sheets() %>% # get name of sheets from the file
+  set_names() %>% # set names of each variable to name of sheet
+  map(read_excel, path = ion_rhythmicity) %>% # create list of pre-calculated outputs
+  list2env(.GlobalEnv) # allow each output to be accessed individually, like how they went into the raw excel file in the first place
+```
+
+------------------------------------------------------------------------
+
+# Rhythmic ion-binders
+
+I want to explore the 16 proteins identified as rhythmically-abundant and also using Mg2+ as a co-factor in more detail.
+
+## Heatmaps
+
+These are a good way of visualising how the abundance of each protein oscillates over time.
+
+My initial attempts at creating heatmaps:
 
 ```{r phase-heatmaps-initial}
 # should probably be in the format time/identifier/abundance to plot properly
@@ -293,6 +716,10 @@ phase_heatmap
 #  phase_circular # this isn't right
 ```
 
+This works, but since the abundance of each protein was only recorded every 3.5 hours, interpolating the data will create a "higher-resolution" heatmap. I chose to interpolate to every 0.5 hours in order to incorporate all of the original data points properly.
+
+Creating and plotting an interpolated version of the protein abundance data:
+
 ```{r interpolated-phase-heatmaps}
 interped_times <- seq(48, 121.5, 0.5) # create list of time points to interpolate for
 
@@ -330,357 +757,192 @@ interped_heatmap <- ggplot(data = interped_heatmap_data,
 # scale_fill_gradient(high = "yellow", low = "red") # construct heatmap
 
 interped_heatmap # view resultant plot
-
 ```
 
-```         
-```
+Interpolating gives a clearer heatmap.
 
-## Proteins with K as a co-factor
+For circadian data, it can be advantageous to plot it circularly, but since the protein abundance data is over 3 days of LL, it needs to be condensed into a 24-hour window.
 
-For this, I searched on UniProt for all proteins in *Ostreococcus tauri* OTTH0595 that use K+ as a co-factor using its ChEBI number, and downloaded the result as a .tsv file. 4 protein entries were identified in this search.
+```{r circular-mg-heatmap}
+# like AB's figure in multiomics
+circ_heatmap_data <- select(interped_heatmap_data, 
+                            "Identifier", "Time", "Abundance", "zero_one") %>%
+  group_by(Identifier) %>%
+  mutate(peak_time = Time[Abundance == max(Abundance)]) %>%
+  ungroup()
+  
+circ_heatmap_data # view 
 
-```{r load-k-cofactor-table}
-k_cofactor_table <- read_tsv("uniprotkb_cc_cofactor_chebi_CHEBI_29103_2025_03_13.tsv", name_repair = function(x) gsub("\\s+", "_", x))
-k_cofactor_table
-```
-
-As with the Mg2+, to compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
-Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
-
-```{r k-sequences-identifiers, }
-k_co_seqs <- select(k_cofactor_table, Gene_Names, Sequence) %>% # get list of  sequences from cofactor table
-  mutate(Identifier = str_extract(Gene_Names, "OtC.*|ostta.*")) # isolate to ostta or OtC numbers, if they're there
-
-k_co_seqs # 4
-
-count(k_co_seqs, Sequence, sort = TRUE) # check every sequence only shows up once
-count(k_co_seqs, Identifier, sort = TRUE) # 1 sequence lacks an ostta/OtC number
-```
-
-```{r k-co-get-missing-identifiers}
-k_co_joined <- left_join(select(k_co_seqs, !Gene_Names), proteome_seqs, by = "Sequence", suffix = c("_KCo", "_Proteome")) # join lists together
-
-count(k_co_joined, Identifier_KCo, sort = TRUE) # 1 missing identifier
-count(k_co_joined, Identifier_Proteome, sort = TRUE) # all identifiers in co-factor table are also in kay proteome
-
-k_co_joined
-
-k_co_seqs <- unite(k_co_joined, Identifier, !Sequence, na.rm = TRUE) %>%
-  mutate(Identifier = str_remove(Identifier, "_.*")) # combine columns
-
-k_co_seqs # still at 4, so the missing identifier was successfully filled by combining
-```
-
-Now that I have a cleaner list, I can update the initial table.
-
-```{r clean-k-cofactor-table}
-k_cofactor_table <- mutate(k_cofactor_table, Gene_Names = k_co_seqs$Identifier) %>% rename(Identifier = Gene_Names) # swap old column out for new one
-k_cofactor_table
-```
-
-From here, I can now extract the full information for any proteins with K+ as a co-factor that have also been identified as rhythmic in LL, using the ostta numbers.
-
-```{r k-co-find-rhythmics}
-k_co_rhythmics <- tibble() # initialise blank tibble to add results to
-# already have double_rhythmics from before
-
-for (ostta in k_co_seqs$Identifier) {
-  # cat("Current identifier:",ostta,"\n\n") # test
-  result <- filter(double_rhythmics, Identifier %in% ostta) # get row of table where each cofactor is
-  k_co_rhythmics <- rbind(k_co_rhythmics, result) # add to a table
-}
-
-k_co_rhythmics
-```
-
-This identifies 1 protein that is rhythmic in LL conditions according to both RAIN and ECHO, and also binds K+ as a co-factor - in this case, it is a pyruvate kinase (ostta16g0040) which was already identified in the previous round of analysis because it also binds Mg2+ as a co-factor.
-
-## Saving/loading results
-
-The tool doesn't need to re-do all of this searching every time it is run, so I will save the results to a file and load them in from that file in the tool.
-
-```{r save-rhythmic-ion-binders, eval=FALSE, include=FALSE}
-write_xlsx(mg_co_rhythmics, "mg_co_rhythmics.xlsx")
-mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx")
-mg_co_rhythmics
-```
-
-```{r load-rhythmic-ion-binding}
-rhythmic_ion_binders <- read_excel("rhythmic_ion-binders.xlsx", range = "A1:G17")
-rhythmic_ion_binders # this is the same as the mg_co_rhythmics table
-```
-
-# 
-
-------------------------------------------------------------------------
-
-# Ion exploration
-
-The ion abundance data is unpublished. My project focuses on magnesium, calcium, and potassium because these are the ions good-quality data was obtained for. (phosphorus is also in the file, but is not being included in my tool)
-
-```{r load-ion-data}
-ion_abundance <- read_excel("ions.xlsx", range = "A3:M41", col_names = c(
-  "Time",
-  "Mg_1", "Mg_2", "Mg_3", "Mg_4",
-  "Ca_1", "Ca_2", "Ca_3", "Ca_4",
-  "K_1", "K_2", "K_3", "K_4"
-)) # columns aren't named in the actual raw file so that's done manually here
-ion_abundance <- mutate(ion_abundance, Condition = case_when(Time <= 24 ~ "LD", Time >= 48 ~ "LL"), .after = Time) %>% drop_na() # add condition column
-
-ion_abundance # preview file
-```
-
-In the tool, the values are loaded in from the spreadsheet once, and then subsections of this table are taken and formatted based on which ions the user chooses in the UI.
-
-```{r shiny-ion-input, eval=FALSE, include=FALSE}
-checkboxGroupInput(
-  input = "ions", label = "Select ions:", selected = NULL,
-  choices = c("Calcium" = "Ca", "Potassium" = "K", "Magnesium" = "Mg")
-)
-
-radioButtons("ion_abs_rel",
-  label = "Plot abundance as:",
-  choices = c("Absolute" = "abs", "Relative" = "rel")
-)
-
-checkboxInput(input = "ion_raw", label = "View raw values?")
-
-radioButtons("ion_rain_echo",
-  label = "Show LL values from:",
-  choices = c("RAIN" = "rain", "ECHO" = "echo")
-)
-```
-
-```{r shiny-ion-data, eval=FALSE, include=FALSE}
-ion_data <- reactive({
-  req(input$ions) # wait for an ion to be selected
-  ion_data <- select(ion_abundance, "Time", contains(input$ions)) # create table with all necessary columns
-  ion_data <- pivot_longer(ion_data, cols = !Time, names_to = "Ion", values_to = "Abundance") %>% drop_na()
-  ion_data$Ion <- str_remove(ion_data$Ion, "\\_.*") # clean up ion names
-  ion_data <- mutate(ion_data,
-    Condition = case_when(ion_data$Time <= 24 ~ "LD", ion_data$Time >= 48 ~ "LL"),
-    .after = Time
-  ) # add condition column
-  ion_data <- ion_data %>%
-    group_by(Time, Condition, Ion) %>%
-    summarise(across(), mean = mean(Abundance), sd = sd(Abundance)) %>%
-    group_by(Ion) %>%
-    mutate(rel_abun = mean / max(mean)) # add other/stats columns
-})
-```
-
-## Abundance visualisation
-
-The tool allows the change in abundance of each of the ions over time to be viewed on a graph.
-
-### Absolute abundance
-
-This works best when only one ion is being plotted.
-
-```{r plot-ion-absolute, eval=FALSE, include=FALSE}
-ion_graph_abs <- ggplot(data = ion_data(), aes(x = Time, y = Abundance, group = Ion)) +
-  ggtitle("Ion abundance") +
-  geom_stripped_cols(width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff", colour = "grey") +
+circ_heatmap <- ggplot(data = circ_heatmap_data, 
+                       aes(x = Time, 
+                           y = fct_reorder(Identifier, peak_time, .desc = TRUE),
+                       fill = zero_one)) +
+  geom_tile() +
+    
   theme_bw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
-  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
-  scale_x_break(c(26, 48)) +
-  ggborderline::geom_borderline(
-    linewidth = 0.5, aes(
-      y = mean, colour = Ion,
-      group = interaction(Ion, Condition)
-    ),
-    bordercolour = "black"
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 12)
   ) +
-  geom_errorbar(aes(y = mean, ymin = mean - sd, ymax = mean + sd)) +
-  geom_point(size = 2, aes(x = Time, y = Abundance, group = Ion, fill = Ion), shape = 21, colour = "black") +
-  labs(x = "Time (h)", y = "Ion abundance (ug/L)")
+  scale_x_continuous(breaks = scales::breaks_width(12)) +
+  scale_fill_viridis(option = "D") +
+  
+  labs(x = "Time", y = "Identifier", fill = "Normalised\nabundance") +
+  
+  coord_radial(inner.radius = 0.6, expand = FALSE) # make circular
 
-ion_graph_abs
+circ_heatmap
 ```
 
-### Relative abundance
+Creating a 24-hour circular heatmap:
 
-This is better for plotting multiple ions on the same graph.
+```{r multiday-heatmap}
+# My attempts to stack all three days on top of each other for the heatmap
+# initial mutate line goes from 1 to 4 due to timepoints >= 120
 
-```{r plot-ion-relative, eval=FALSE, include=FALSE}
-ggplot(data = ion_data(), aes(x = Time, y = rel_abun, group = Ion)) +
-  ggtitle("Ion abundance") +
-  geom_stripped_cols(width = 12, nudge_x = 6, odd = "#e5e5e5", even = "#ffffff", colour = "grey") +
+multiday_data <- circ_heatmap_data %>%
+  mutate(Day = (Time %/% 24) - 1, 
+         ZT = Time %% 24, .after = Time) %>%
+  filter(Day <= 3, .preserve = TRUE) %>% # remove timepoints after 120 for plotting
+  unite(col = "ID_day", Identifier, Day, sep = "_", remove = FALSE) %>%
+  
+  group_by(ID_day) %>%
+  mutate(peak_time = ZT[Abundance == max(Abundance)],
+         zero_one = ((Abundance - min(Abundance)) /
+      (max(Abundance) - min(Abundance)))
+      ) %>% # recalculate 0-1 normalisation and peak time per day
+  ungroup() 
+
+multiday_data
+
+multiday_heatmap <- ggplot(data = multiday_data, 
+                       aes(x = ZT, 
+                           y = fct_reorder2(ID_day, peak_time, Identifier, .desc = TRUE),
+                       fill = zero_one)) +
+  geom_tile() +
   theme_bw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5), axis.title = element_text(size = 12)) +
-  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL) +
-  scale_x_break(c(26, 48)) +
-  ggborderline::geom_borderline(
-    linewidth = 0.5, aes(colour = Ion, group = interaction(Ion, Condition)),
-    bordercolour = "black"
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 12)
   ) +
-  geom_point(size = 2, aes(fill = Ion), shape = 21, colour = "black") +
-  labs(x = "Time (h)", y = "Relative ion abundance")
+  scale_x_continuous(breaks = scales::breaks_width(1)) +
+  scale_fill_viridis(option = "D") +
+  labs(x = "ZT", fill = "Normalised\nabundance")
+
+multiday_heatmap
+
+multiday_heatmap_circ <- ggplot(data = multiday_data, 
+                       aes(x = ZT, 
+                           y = fct_reorder2(ID_day, peak_time, Identifier, .desc = TRUE),
+                       fill = zero_one)) +
+  #geom_tile() +
+  geom_rect(aes(xmin = ZT, xmax = ZT + 0.5, 
+                ymin = stage(ID_day, after_scale = ymin-1),
+                ymax = stage(ID_day, after_scale = ymax))
+            ) +
+  geom_vline(xintercept = c(0, 12), linewidth = 0.1, alpha = 0.5) + # check the axes aren't skewed
+    
+  scale_x_continuous(expand = c(0, 0), breaks = scales::breaks_width(1)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_fill_viridis(option = "D") +
+    
+  coord_radial(inner.radius = 0.6, expand = FALSE) + # make circular
+    
+  labs(x = "ZT", y = NULL, fill = "Normalised\nabundance")
+
+multiday_heatmap_circ
 ```
 
-## Calculation of rhythmicity
+Since fitting into 24 hours gives three different sets of data for each protein, which may not fully overlap well due to the periods of each protein being different, taking the mean of the 3 full days may give a clearer image.
 
-### RAIN
+```{r circular-heatmap-3-day-mean}
 
-The RAIN method of detecting rhythmicity was implemented using the `rain()` function, from the package of the same name.
+# let's just start back from the initial files again
+circular_heatmap_data <- select(rhythmic_ion_binders_full, Identifier, "48":"121.5") %>% # get relevant columns
+  add_column(!!!interped_times, .name_repair = "minimal") %>% # add times to interpolate into (note that this also fills the columns)
+  pivot_longer(cols = -Identifier, names_to = "Time", names_transform = as.numeric, values_to = "Abundance") %>% # condense all times to one column
+  
+  mutate(Abundance = case_when(Time == Abundance ~ NA, TRUE ~ Abundance),
+          # clean up default values from add_column() by replacing them with NAs
+         ZT = Time %% 24) %>% # condense all times to 24-hour window
+  arrange(Time) %>% # check NAs
+  distinct(Identifier, Time, .keep_all = TRUE) %>% # remove unnecessary rows
+  
+  mutate(.by = Identifier,
+         Abundance = na.spline(Abundance, na.rm = FALSE)) %>% # interpolate per ID
+  
+  filter(Time < 120) %>% # filter so each value only has 3 days
+  
+  mutate(.by = c(Identifier, ZT),
+         perday_mean = mean(Abundance) # add mean of 3 days for each protein + time
+         ) %>%
+  mutate(.by = Identifier,
+         peak_ZT = mean(ZT[perday_mean == max(perday_mean)]), # add peak time
+         zero_one = (perday_mean - min(perday_mean)) /
+                 (max(perday_mean) - min(perday_mean)) # add 0-1 normalisation 
+         )
 
-RAIN requires a time series to be given as a matrix, with time points as rows and sample series as columns (replicates are on subsequent rows). This is not the original layout of the ion table, so some pivoting is required first.
+circular_heatmap_data # view outcome
+distinct(circular_heatmap_data, Identifier, peak_ZT) %>% arrange(peak_ZT) # view peak time for each protein
 
-```{r ions-rain-table}
-ions_rain_table <- pivot_longer(ion_abundance, cols = -c(Time, Condition), names_to = "Ion", values_to = "Abundance") %>%
-  separate_wider_delim(cols = "Ion", delim = "_", names = c("Ion", "Replicate")) %>%
-  pivot_wider(names_from = Ion, values_from = Abundance) %>%
-  select(-Replicate) # get values in necessary format
-ions_rain_table
+mean_multiday_heatmap <- ggplot(data = circular_heatmap_data, 
+                                aes(x = ZT, 
+                                    y = fct_reorder(Identifier, peak_ZT, 
+                                                     .desc = TRUE), 
+                                    fill = zero_one)) +
+
+  geom_rect(aes(xmin = ZT, xmax = ZT + 0.5, 
+                ymin = stage(Identifier, after_scale = ymin-0.5),
+                ymax = stage(Identifier, after_scale = ymax+0.5))
+            ) + # add values as a heatmap
+ # geom_vline(xintercept = c(0, 6, 12, 18), linewidth = 0.1, alpha = 0.5) + # check the axes aren't skewed
+  theme(rect = element_rect(fill = "grey")) +
+  scale_x_continuous(expand = c(0, 0), breaks = scales::breaks_width(1)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  
+  scale_fill_gradient2(low = "black", mid = "blue", high = "yellow", 
+                       midpoint = 0.5) +
+  #scale_fill_distiller(type = "div", palette = "RdBu") +
+  #scale_fill_viridis(option = "D") +
+    
+  labs(x = "ZT", y = "Identifier (ordered by peak time)", 
+       fill = "Normalised\nabundance\n(n = 3)")
+
+mean_multiday_heatmap
+
+mean_heatmap_circ <- mean_multiday_heatmap + 
+  coord_radial(inner.radius = 0.6, expand = FALSE) # make circular
+  
+mean_heatmap_circ
+
+mean_multiday_traces <- ggplot(data = circular_heatmap_data,
+                               aes(x = ZT,
+                                   y = fct_reorder(Identifier, peak_ZT, 
+                                                   .desc = TRUE),
+                                   fill = zero_one)) +
+  geom_point(shape = 22) +
+  scale_fill_gradient2(low = "black", mid = "blue", high = "yellow", 
+                       midpoint = 0.5)
+
+mean_multiday_traces
 ```
 
-Once the data is arranged in the correct format, it can then go into the `rain()` function. All parameters were kept the same as those applied to the proteome in [Kay *et al.* (2021)](https://doi.org/10.1038/s42003-021-02680-3), to better facilitate comparison of the results, except where changes were necessary to reflect differences in sampling (i.e. `deltat = 2` because the ion abundance samples were taken 2 hours apart, and `nr.series = 4` because there are 4 replicates for each ion).
+```{r mean-multiday-peaks}
+circular_heatmap_data
 
-```{r run-rain-for-ions, eval=FALSE, include=FALSE}
-# NB: this takes ages to run for some reason
+arrange(circular_heatmap_data, peak_ZT)
 
-ions_rain_LD <- filter(ions_rain_table, Condition == "LD") %>%
-  select(-c(Time, Condition)) %>%
-  as.matrix() %>%
-  rain(
-    period = 24, period.delta = 0, method = "independent", # only 24-hour periods
-    deltat = 2, nr.series = 4, verbose = TRUE
-  ) %>% rownames_to_column("Ion")  # matches paper for proteome
+mean_multiday_peaks <- ggplot(data = circular_heatmap_data,
+                              aes(x = fct_reorder(Identifier, peak_ZT), 
+                                  y = peak_ZT)) +
+  geom_point(aes(colour = fct_reorder(Identifier, peak_ZT))) +
+  geom_text(aes(label = peak_ZT), nudge_y = 0.5, size = 3) +
+  theme_grey() +
+  theme(axis.text.x = element_text(angle = 80, hjust = 1)) +
+  scale_y_continuous(breaks = c(0, 6, 12, 18, 24), 
+                     minor_breaks = scales::breaks_width(2)) +
+  labs(x = "Identifier", colour = "Identifier")
 
-ions_rain_LL <- filter(ions_rain_table, Condition == "LL") %>%
-  select(-c(Time, Condition)) %>%
-  as.matrix() %>%
-  rain(
-    period = 24, period.delta = 4, method = "longitudinal", # 22-28 hour periods
-    deltat = 2, nr.series = 4, verbose = TRUE
-  ) %>% rownames_to_column("Ion") # matches paper for proteome
-
-ions_rain_LD
-ions_rain_LL
+mean_multiday_peaks
 ```
-
-This has identified all three ions as rhythmic in both LD and LL, interestingly enough, though Ca is much less than the other two (which makes sense).\
-Peak shape refers to the number of time points in the falling part of the oscillation - more sine-shaped oscillations will have more balanced peak shapes, but a sawtooth with a long rising and short falling shape would have a lower peak shape number.
-
-### ECHO
-
-The ECHO method was implemented using the `echo.find()` function, from the package of the same name.
-
-ECHO requires sample series to be in rows, with replicates ordered by time point as columns. The original table is not in this format, so some initial pivoting is required first.
-
-```{r ions-echo-table}
-ions_echo_table <- pivot_longer(ion_abundance, cols = -c(Time, Condition), names_to = "Ion", values_to = "Abundance") %>%
-  drop_na() %>%
-  separate_wider_delim(cols = "Ion", delim = "_", names = c("Ion", "Replicate")) %>%
-  select(-Condition) %>%
-  pivot_wider(names_from = c("Time", "Replicate"), values_from = c("Abundance")) # get values in right format
-
-ions_echo_table
-```
-
-Once the data is in the correct format for ECHO, the function can be run on the LD and LL data. All parameters were kept the same as those known to have been applied to the proteome in [Kay *et al.* (2021)](https://doi.org/10.1038/s42003-021-02680-3) to better facilitate comparison of the results, except where changes were necessary to reflect differences in sampling (i.e. `resol = 2` because the ion abundance samples were taken 2 hours apart, `num_reps = 4` because there are 4 replicates for each ion).
-
-```{r run-echo-for-ions}
-ions_echo_LD <- select(ions_echo_table, Ion, "0_1":"24_4") %>%
-  echo_find(
-    begin = 0, end = 24, resol = 2, num_reps = 4, low = 24, high = 24, run_all_per = FALSE,
-    paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, is_de_linear_trend = FALSE,
-    is_smooth = FALSE
-  ) %>%
-  rename(Ion = "Gene Name") # run echo for relevant time points
-
-ions_echo_LL <- select(ions_echo_table, Ion, "48_1":"96_4") %>%
-  echo_find(
-    begin = 48, end = 96, resol = 2, num_reps = 4, low = 20, high = 28, run_all_per = FALSE,
-    paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, is_de_linear_trend = TRUE,
-    is_smooth = FALSE
-  ) %>%
-  rename(Ion = "Gene Name") # run echo for relevant time points
-
-ions_echo_LD
-ions_echo_LL
-
-select(ions_echo_LD, "Ion", "Oscillation Type", "Period", "P-Value":"BY Adj P-Value") # view results
-select(ions_echo_LL, "Ion", "Oscillation Type", "Period","P-Value":"BY Adj P-Value") # view results
-```
-
-This has identified K as most significantly rhythmic in LD conditions, followed by Ca (and determines that Mg is not significantly rhythmic in LD at the *p* \< 0.05 threshold). Mg and Ca are assigned a repressed oscillation type (where the amplitude decreases considerably over time), while K is labelled a harmonic oscillation (where amplitude remains mostly the same over time).\
-Conversely, all three ions are once again identified as rhythmic in LL conditions (except Ca but only when the *p*-value is adjusted using the BY method), though much more significantly for Mg and K versus Ca. Mg and K are assigned a damped oscillation type, where the amplitude of the rhythm decreases with time, while Ca is assigned an overexpressed oscillation type, which is the opposite (amplitude increases with time, to the point ECHO no longer counts it as circadian). The period of Mg is longer than Ca or K.
-
-ECHO fits the original time points to the assigned oscillation type's differential equation, so I want to see how this fit is different to the original samples.
-
-```{r echo-fit-data}
-ions_echo_LL_ori <- select(ions_echo_LL, "Ion", starts_with("Original")) %>% rename_with(~ str_remove(., "Original TP"), everything()) %>% # get relevant columns
-  pivot_longer(cols = !"Ion", names_to = "Time", values_to = "Abundance")
-# This has 4 rows per time point, so I need to get the mean
-ions_echo_LL_ori$Time <- str_remove(ions_echo_LL_ori$Time, "\\..*")
-ions_echo_LL_ori <- ions_echo_LL_ori %>%
-  group_by(Ion, Time) %>%
-  summarise(across(), mean = mean(Abundance)) %>%
-  distinct(Ion, Time, mean) %>%
-  pivot_wider(names_from = "Ion", values_from = "mean") %>%
-  ungroup() # pivot to plot
-
-
-ions_echo_LL_fit <- select(ions_echo_LL, "Ion", starts_with("Fitted")) %>%
-  rename_with(~ str_remove(., "Fitted TP"), everything()) %>% # get relevant columns
-  pivot_longer(cols = !"Ion", names_to = "Time", values_to = "Abundance") %>%
-  pivot_wider(names_from = "Ion", values_from = "Abundance") # pivot to plot
-
-ions_echo_LL_ori
-ions_echo_LL_fit
-```
-
-```{r plot-echo-fit-data}
-ions_echo_LL_to_plot <- left_join(ions_echo_LL_ori, ions_echo_LL_fit,
-  by = "Time",
-  suffix = c("_Original", "_Fitted")
-)
-ions_echo_LL_to_plot
-
-echo_plot_data <- ions_echo_LL_to_plot %>% 
-  pivot_longer(cols = !Time, names_to = "Ion", values_to = "Abundance") %>%
-  separate_wider_delim(cols = Ion, delim = "_", names = c("Ion", "Status")) %>%
-  group_by(Ion, Status) %>%
-  mutate(zero_one = ((Abundance - min(Abundance)) /
-    (max(Abundance) - min(Abundance))))
-
-echo_plot_data
-
-echo_plot <- ggplot(data = echo_plot_data, 
-                    aes(x = Time, y = zero_one, group = interaction(Ion, Status),
-                    colour = interaction(Ion, Status))) +
-  geom_line(linewidth = 0.8) +
-  geom_point() +
-  geom_point(colour = "black", shape = 21)
-
-echo_plot
-```
-
-### Saving/loading results
-
-For the Shiny tool, I have chosen to save these calculated rhythmicity values for the ions to their own Excel spreadsheet (similar to the one that exists for the proteome), as they do not need to be re-calculated every time the tool is launched.
-
-```{r save-ion-rhythmicity, eval=FALSE, include=FALSE}
-ion_rhythmicity <- list(ions_rain_LD, ions_rain_LL, ions_echo_LD, ions_echo_LL) # get values as list
-names(ion_rhythmicity) <- c("ions_rain_LD", "ions_rain_LL", "ions_echo_LD", "ions_echo_LL")
-write_xlsx(ion_rhythmicity, "ion_rhythmicity.xlsx") # write each table of values to its own sheet
-```
-
-These are then loaded in from this spreadsheet when the tool is first launched, in a similar way to the protein datasets.
-
-```{r load-ion-rhythmicity}
-ion_rhythmicity <- "ion_rhythmicity.xlsx" # set file name in tool
-ion_rhythmicity <- ion_rhythmicity %>%
-  excel_sheets() %>% # get name of sheets from the file
-  set_names() %>% # set names of each variable to name of sheet
-  map(read_excel, path = ion_rhythmicity) %>% # create list of pre-calculated outputs
-  list2env(.GlobalEnv) # allow each output to be accessed individually, like how they went into the raw excel file in the first place
-```
-
-------------------------------------------------------------------------
 
 # Comparing protein/ion phases
 
@@ -727,33 +989,27 @@ ion_data <- ion_data %>%
 
 ion_data <- ion_data %>%
   filter(Ion != "Ca") # take out calcium because that's not really rhythmic
+ion_data
 
-rhythmic_abundance <- select(rhythmic_ion_binders_full, "Identifier", "48":"121.5") %>%
+rhythmic_abundance_iondays <- select(rhythmic_ion_binders_full, "Identifier", "48":"97") %>%
   pivot_longer(cols = !Identifier, names_to = "Time", values_to = "Abundance") # set up initial table of abundance values
-rhythmic_abundance
+rhythmic_abundance_iondays
 
-peak_times <- rhythmic_abundance %>%
+peak_times <- rhythmic_abundance_iondays %>%
   group_by(Identifier) %>%
-  mutate(Time = case_when(Abundance == max(Abundance) ~ as.numeric(Time))) %>%
+  mutate(Time = case_when(Abundance == max(Abundance) ~ as.numeric(Time))) %>% # keep only peak times
   ungroup() %>%
   distinct(Identifier, Time, .keep_all = TRUE) %>%
-  drop_na() %>%
-  mutate(zero_one = ((Abundance - min(Abundance)) /
-    (max(Abundance) - min(Abundance)))) # get maximum abundance for all 16
+  drop_na() %>% # get peak time (and abundance value at that time) for all 16
+  mutate(zero_one = (Abundance - min(Abundance)) /
+                 (max(Abundance) - min(Abundance))) # normalise to 0-1
 
-peak_times
-
-
-peaks <- select(rhythmic_ion_binders, Identifier, Absolute_Phase_LL) %>%
-  mutate(
-    phase_day_1 = Absolute_Phase_LL + 48,
-    phase_day_2 = Absolute_Phase_LL + 72
-  )
-
-peaks
+peak_times %>% arrange(Time)
 ```
 
 ```{r trace-peaks-graph}
+
+ion_data
 
 trace_peaks_graph <- ggplot(data = ion_data,
   aes(x = Time, y = rel_abun, colour = Ion, group = Ion)) +
@@ -771,107 +1027,34 @@ trace_peaks_graph <- ggplot(data = ion_data,
   geom_point(shape = 21, colour = "black") + # plot ion traces
   
   geom_point(data = peak_times,
-    aes(x = Time, y = 1, group = NULL),
-    colour = "black", shape = 4, size = 3) + # plot peak times
+    aes(x = Time, y = 0.95, group = NULL, colour = NULL),
+    shape = 4, size = 2, 
+    position = position_jitter(width = 0, height = 0.05, seed = 1),
+    show.legend = FALSE) + # plot peak times
+    
+  # geom_text(data = peak_times,
+  #           aes(y = 0.95, group = NULL, colour = NULL, label = Identifier),
+  #           size = 2.5,
+  #           position = position_jitter(width = 0, height = 0.06, seed = 1), 
+  #           show.legend = FALSE) + # add labels 
+  
+  geom_text_repel(data = peak_times,
+            aes(y = 0.95, group = NULL, colour = NULL, label = Identifier),
+            size = 2.5, 
+            position = position_jitter(height = 0.05, seed = 1),
+            show.legend = FALSE, 
+            max.overlaps = Inf, min.segment.length = 0) +
 
   theme_bw() +
   
   scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL,
-                     limits = c(48, 96) # limit only to LL
-  )
+                     limits = c(48, 96)) # limit only to LL
+  
 
 trace_peaks_graph # show graph
 ```
 
-```{r circular-mg-heatmap}
-# like AB's figure in multiomics
-circ_heatmap_data <- select(interped_heatmap_data, 
-                            "Identifier", "Time", "Abundance", "zero_one") %>%
-  group_by(Identifier) %>%
-  mutate(peak_time = Time[Abundance == max(Abundance)]) %>%
-  ungroup()
-  
-circ_heatmap_data # view 
-
-circ_heatmap <- ggplot(data = circ_heatmap_data, 
-                       aes(x = Time, 
-                           y = fct_reorder(Identifier, peak_time, .desc = TRUE),
-                       fill = zero_one)) +
-  geom_tile() +
-    
-  theme_bw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5),
-        axis.title = element_text(size = 12)
-  ) +
-  scale_x_continuous(breaks = scales::breaks_width(12)) +
-  scale_fill_viridis(option = "D") +
-  
-  labs(x = "Time", y = "Identifier", fill = "Normalised\nabundance") +
-  
-  coord_radial(inner.radius = 0.6, expand = FALSE) # make circular
-
-circ_heatmap
-```
-
-```{r multiday-heatmap}
-# My attempts to stack all three days on top of each other for the heatmap
-# initial mutate line goes from 1 to 4 due to timepoints >= 120
-
-multiday_data <- circ_heatmap_data %>%
-  mutate(Day = (Time %/% 24) - 1, 
-         ZT = Time %% 24, .after = Time) %>%
-  filter(Day <= 3, .preserve = TRUE) %>% # remove timepoints after 120 for plotting
-  unite(col = "ID_day", Identifier, Day, sep = "_", remove = FALSE) %>%
-  
-  group_by(ID_day) %>%
-  mutate(peak_time = ZT[Abundance == max(Abundance)],
-         zero_one = ((Abundance - min(Abundance)) /
-      (max(Abundance) - min(Abundance)))
-      ) %>% # recalculate 0-1 normalisation and peak time per day
-  ungroup() 
-
-multiday_heatmap <- ggplot(data = multiday_data, 
-                       aes(x = ZT, 
-                           y = fct_reorder2(ID_day, peak_time, Identifier, .desc = TRUE),
-                       fill = zero_one)) +
-  geom_tile() +
-  theme_bw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5),
-        axis.title = element_text(size = 12)
-  ) +
-  scale_x_continuous(breaks = scales::breaks_width(1)) +
-  scale_fill_viridis(option = "D") +
-  labs(x = "ZT", y = NULL, fill = "Normalised\nabundance")
-
-multiday_heatmap
-
-multiday_heatmap_circ <- ggplot(data = multiday_data, 
-                       aes(x = ZT, 
-                           y = fct_reorder2(ID_day, Identifier, peak_time, .desc = TRUE),
-                       fill = zero_one)) +
-  #geom_tile() +
-  geom_rect(aes(xmin = ZT, xmax = ZT + 0.5, 
-                ymin = stage(ID_day, after_scale = ymin-1),
-                ymax = stage(ID_day, after_scale = ymax))
-            ) +
-  geom_vline(xintercept = c(0, 12), linewidth = 0.1, alpha = 0.5) + # check the axes aren't skewed
-    
-  theme_bw() +
-  theme(plot.title = element_text(face = "bold", hjust = 0.5),
-        axis.title = element_text(size = 12)
-  ) +
-  scale_x_continuous(expand = c(0, 0), breaks = scales::breaks_width(1)) +
-  scale_y_discrete(expand = c(0, 0)) +
-  scale_fill_viridis(option = "D") +
-    
-  coord_radial(inner.radius = 0.6, expand = FALSE) + # make circular
-    
-  labs(x = "ZT", y = NULL, fill = "Normalised\nabundance")
-
-multiday_heatmap_circ
-```
-
-==
+===
 
 ```{r end}
 print("End chunk")
