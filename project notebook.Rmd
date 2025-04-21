@@ -16,7 +16,7 @@ library(bslib)
 library(echo.find)
 library(ggplot2)
 library(ggbreak)
-library(ggstats) # for stripped columns
+library(ggnewscale) # for setting colour palette
 library(shiny)
 library(shinycssloaders)
 library(plotly)
@@ -29,6 +29,42 @@ library(zoo) # for interpolation
 ```
 
 # 
+
+# Setup
+
+```{r time-shading}
+time_shading <- tibble(Time = seq(0, 122, 1)) %>%
+  mutate(
+    Condition = case_when(Time <= 24 ~ "LD", Time >= 48 ~ "LL"),
+    ToD = case_when(
+      ((Time %/% 12) %% 2) == 1 & Condition == "LD" ~ "Night",
+      ((Time %/% 12) %% 2) == 1 & Condition == "LL" ~ "Subjective night",
+      ((Time %/% 12) %% 2) == 0 ~ "Day"
+    ),
+    colour = case_when(
+      ToD == "Day" ~ "#ffffff",
+      ToD == "Night" ~ "#a5a5a5",
+      ToD == "Subjective night" ~ "#e5e5e5"
+    )
+  ) %>% drop_na() # set up graph background 
+time_shading
+
+time_plot <- tibble(Time = seq(0,122,1),
+                    Value = Time%%10) # create dummy table to plot
+
+time_graph <- ggplot(data = time_plot, aes(x = Time, y = Value)) +
+  geom_rect(data = time_shading,
+                aes(y = NULL, group = NULL,
+                    xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, 
+                    fill = colour), 
+                show.legend = FALSE) + # set up background
+      scale_fill_identity(time_shading$colour) + # shade appropriately
+      new_scale_fill() + # let rest of graph use new shading 
+  
+  geom_point(alpha = 0.5) # plot dummy table
+
+time_graph # test that it works
+```
 
 ------------------------------------------------------------------------
 
@@ -197,6 +233,10 @@ rhythmic_ion_binders_full <- filter(double_rhythmics_full, Identifier %in% mg_co
 rhythmic_ion_binders_full
 ```
 
+```{r rhythmic-binder-traces}
+
+```
+
 ```{r phase-heatmaps-initial}
 # should probably be in the format time/identifier/abundance to plot properly
 
@@ -218,6 +258,7 @@ phase_heatmap_data # view outcome
 
 phase_heatmap <- ggplot(data = phase_heatmap_data, aes(x = Time, y = fct_reorder(Identifier, Circadian_Phase_LL), fill = zeroone_abun)) +
   geom_tile() +
+  #geom_smooth(aes(y = rel_abun, group = Identifier, colour = Identifier), span = 0.2, se = FALSE) +
   #  geom_vline(xintercept = c(48, 60, 72, 84, 96, 108, 120), alpha = 0.5) +
   theme_bw() +
   theme(
@@ -230,25 +271,26 @@ phase_heatmap <- ggplot(data = phase_heatmap_data, aes(x = Time, y = fct_reorder
   ) +
   scale_x_continuous(breaks = scales::breaks_width(12)) +
   # scale_fill_gradient(high = "yellow", low = "red")
+  scale_colour_viridis_d(option = "turbo") +
   scale_fill_viridis(option = "D")
 phase_heatmap
 
-base_phase_heatmap <- select(rhythmic_ion_binders_full, Identifier, "48":"121.5") %>%
-  column_to_rownames("Identifier") %>%
-  as.matrix()
-
-heatmap(base_phase_heatmap) # try base R version
-
-
-phase_circular <- ggplot(data = phase_heatmap_data, 
-                         aes(x = Abundance, y = Time, fill = norm_abun)) +
-  geom_tile() +
-  coord_polar() +
-  scale_x_continuous(breaks = scales::breaks_width(1)) +
-  labs(title = "Title") +
-  scale_fill_gradient(high = "yellow", low = "red")
-
-# phase_circular # this isn't right
+# base_phase_heatmap <- select(rhythmic_ion_binders_full, Identifier, "48":"121.5") %>%
+#   column_to_rownames("Identifier") %>%
+#   as.matrix()
+# 
+# heatmap(base_phase_heatmap) # try base R version
+# 
+# 
+# phase_circular <- ggplot(data = phase_heatmap_data, 
+#                          aes(x = Abundance, y = Time, fill = norm_abun)) +
+#   geom_tile() +
+#   coord_polar() +
+#   scale_x_continuous(breaks = scales::breaks_width(1)) +
+#   labs(title = "Title") +
+#   scale_fill_gradient(high = "yellow", low = "red")
+# 
+#  phase_circular # this isn't right
 ```
 
 ```{r interpolated-phase-heatmaps}
@@ -288,6 +330,7 @@ interped_heatmap <- ggplot(data = interped_heatmap_data,
 # scale_fill_gradient(high = "yellow", low = "red") # construct heatmap
 
 interped_heatmap # view resultant plot
+
 ```
 
 ```         
@@ -305,7 +348,7 @@ k_cofactor_table
 As with the Mg2+, to compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
 Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
 
-```{r k-sequences-identifiers}
+```{r k-sequences-identifiers, }
 k_co_seqs <- select(k_cofactor_table, Gene_Names, Sequence) %>% # get list of  sequences from cofactor table
   mutate(Identifier = str_extract(Gene_Names, "OtC.*|ostta.*")) # isolate to ostta or OtC numbers, if they're there
 
@@ -360,6 +403,7 @@ The tool doesn't need to re-do all of this searching every time it is run, so I 
 ```{r save-rhythmic-ion-binders, eval=FALSE, include=FALSE}
 write_xlsx(mg_co_rhythmics, "mg_co_rhythmics.xlsx")
 mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx")
+mg_co_rhythmics
 ```
 
 ```{r load-rhythmic-ion-binding}
@@ -498,26 +542,27 @@ Once the data is arranged in the correct format, it can then go into the `rain()
 # NB: this takes ages to run for some reason
 
 ions_rain_LD <- filter(ions_rain_table, Condition == "LD") %>%
-  select(-Condition) %>%
+  select(-c(Time, Condition)) %>%
   as.matrix() %>%
   rain(
-    period = 24, period.delta = 0, method = "independent",
+    period = 24, period.delta = 0, method = "independent", # only 24-hour periods
     deltat = 2, nr.series = 4, verbose = TRUE
-  ) # matches paper for proteome
+  ) %>% rownames_to_column("Ion")  # matches paper for proteome
 
 ions_rain_LL <- filter(ions_rain_table, Condition == "LL") %>%
-  select(-Condition) %>%
+  select(-c(Time, Condition)) %>%
   as.matrix() %>%
   rain(
-    period = 24, period.delta = 4, method = "longitudinal",
+    period = 24, period.delta = 4, method = "longitudinal", # 22-28 hour periods
     deltat = 2, nr.series = 4, verbose = TRUE
-  ) # matches paper for proteome
+  ) %>% rownames_to_column("Ion") # matches paper for proteome
 
 ions_rain_LD
 ions_rain_LL
 ```
 
-This has identified all three ions as rhythmic in both LD and LL, interestingly enough, though Ca is much less than the other two (which makes sense).
+This has identified all three ions as rhythmic in both LD and LL, interestingly enough, though Ca is much less than the other two (which makes sense).\
+Peak shape refers to the number of time points in the falling part of the oscillation - more sine-shaped oscillations will have more balanced peak shapes, but a sawtooth with a long rising and short falling shape would have a lower peak shape number.
 
 ### ECHO
 
@@ -557,13 +602,12 @@ ions_echo_LL <- select(ions_echo_table, Ion, "48_1":"96_4") %>%
 ions_echo_LD
 ions_echo_LL
 
-select(ions_echo_LD, "Ion", "P-Value":"BY Adj P-Value") # view results
-select(ions_echo_LL, "Ion", "P-Value":"BY Adj P-Value") # view results
+select(ions_echo_LD, "Ion", "Oscillation Type", "Period", "P-Value":"BY Adj P-Value") # view results
+select(ions_echo_LL, "Ion", "Oscillation Type", "Period","P-Value":"BY Adj P-Value") # view results
 ```
 
-This has identified K as most significantly rhythmic in LD conditions, followed by Ca (and determines that Mg is not significantly rhythmic in LD). Mg and Ca are assigned a repressed oscillation type (where the amplitude decreases considerably over time), while K is labelled a harmonic oscillation (where amplitude remains mostly the same over time).\
-Conversely, all three ions are once again identified as rhythmic in LL conditions (except Ca but only when the *p*-value is adjusted using the BY method), though much more significantly for Mg and K versus Ca. Mg and K are assigned a damped oscillation type, where the amplitude of the rhythm decreases with time, while Ca is assigned an overexpressed oscillation type, which is the opposite (amplitude increases with time, to the point ECHO no longer counts it as circadian).\
-**Update this, as it's from when I was running paired = TRUE**
+This has identified K as most significantly rhythmic in LD conditions, followed by Ca (and determines that Mg is not significantly rhythmic in LD at the *p* \< 0.05 threshold). Mg and Ca are assigned a repressed oscillation type (where the amplitude decreases considerably over time), while K is labelled a harmonic oscillation (where amplitude remains mostly the same over time).\
+Conversely, all three ions are once again identified as rhythmic in LL conditions (except Ca but only when the *p*-value is adjusted using the BY method), though much more significantly for Mg and K versus Ca. Mg and K are assigned a damped oscillation type, where the amplitude of the rhythm decreases with time, while Ca is assigned an overexpressed oscillation type, which is the opposite (amplitude increases with time, to the point ECHO no longer counts it as circadian). The period of Mg is longer than Ca or K.
 
 ECHO fits the original time points to the assigned oscillation type's differential equation, so I want to see how this fit is different to the original samples.
 
@@ -620,9 +664,6 @@ echo_plot
 For the Shiny tool, I have chosen to save these calculated rhythmicity values for the ions to their own Excel spreadsheet (similar to the one that exists for the proteome), as they do not need to be re-calculated every time the tool is launched.
 
 ```{r save-ion-rhythmicity, eval=FALSE, include=FALSE}
-ions_rain_LD <- rownames_to_column(ions_rain_LD)
-ions_rain_LL <- rownames_to_column(ions_rain_LL)
-
 ion_rhythmicity <- list(ions_rain_LD, ions_rain_LL, ions_echo_LD, ions_echo_LL) # get values as list
 names(ion_rhythmicity) <- c("ions_rain_LD", "ions_rain_LL", "ions_echo_LD", "ions_echo_LL")
 write_xlsx(ion_rhythmicity, "ion_rhythmicity.xlsx") # write each table of values to its own sheet
@@ -668,7 +709,9 @@ phase_plot <- ggplot(data = protein_phases) +
 phase_plot # plot
 ```
 
-```{r traces-vs-binding-rhythmics}
+Setting up a graph of traces vs. phases of the Mg-binding rhythmic proteins:
+
+```{r trace-peak-setup}
 ion_data <- ion_abundance # create table with all necessary columns
 ion_data <- pivot_longer(ion_data, cols = -c(Time, Condition), names_to = "Ion", values_to = "Abundance") %>% drop_na()
 ion_data$Ion <- str_remove(ion_data$Ion, "\\_.*") # clean up ion names
@@ -683,11 +726,11 @@ ion_data <- ion_data %>%
   mutate(rel_abun = mean / max(mean)) # add other/stats columns
 
 ion_data <- ion_data %>%
-  filter(Ion != "Ca") %>%
-  rhythmic_ion_binders_full()
+  filter(Ion != "Ca") # take out calcium because that's not really rhythmic
 
 rhythmic_abundance <- select(rhythmic_ion_binders_full, "Identifier", "48":"121.5") %>%
-  pivot_longer(cols = !Identifier, names_to = "Time", values_to = "Abundance")
+  pivot_longer(cols = !Identifier, names_to = "Time", values_to = "Abundance") # set up initial table of abundance values
+rhythmic_abundance
 
 peak_times <- rhythmic_abundance %>%
   group_by(Identifier) %>%
@@ -696,7 +739,7 @@ peak_times <- rhythmic_abundance %>%
   distinct(Identifier, Time, .keep_all = TRUE) %>%
   drop_na() %>%
   mutate(zero_one = ((Abundance - min(Abundance)) /
-    (max(Abundance) - min(Abundance))))
+    (max(Abundance) - min(Abundance)))) # get maximum abundance for all 16
 
 peak_times
 
@@ -708,39 +751,127 @@ peaks <- select(rhythmic_ion_binders, Identifier, Absolute_Phase_LL) %>%
   )
 
 peaks
+```
 
+```{r trace-peaks-graph}
 
-
-trace_peaks_graph <- ggplot(
-  data = ion_data,
-  aes(x = Time, y = rel_abun, colour = Ion, group = Ion)
-) +
+trace_peaks_graph <- ggplot(data = ion_data,
+  aes(x = Time, y = rel_abun, colour = Ion, group = Ion)) +
+  
+  geom_rect(data = time_shading,
+                aes(y = NULL, group = NULL, colour = NULL,
+                    xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, 
+                    fill = colour), 
+                show.legend = FALSE) + # set up background
+      scale_fill_identity(time_shading$colour) + # shade appropriately
+      new_scale_fill() + # let rest of graph use new shading 
+  
   geom_line(linewidth = 0.8) +
   geom_point() +
-  geom_point(shape = 21, colour = "black") +
-  geom_point(
-    data = peak_times,
-    aes(x = Time, y = 0.8, group = NULL),
-    colour = "black", shape = 4, size = 3
-  ) +
+  geom_point(shape = 21, colour = "black") + # plot ion traces
+  
+  geom_point(data = peak_times,
+    aes(x = Time, y = 1, group = NULL),
+    colour = "black", shape = 4, size = 3) + # plot peak times
 
-  # geom_point(data = peaks,
-  #            aes(x = phase_day_2, y = 0.8, colour = "orange", group = Identifier),
-  #            shape = 8, size = 2) +
-
-  scale_x_continuous(
-    breaks = scales::breaks_width(12), minor_breaks = NULL,
-    limits = c(48, 96)
+  theme_bw() +
+  
+  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL,
+                     limits = c(48, 96) # limit only to LL
   )
 
-trace_peaks_graph
+trace_peaks_graph # show graph
 ```
 
 ```{r circular-mg-heatmap}
 # like AB's figure in multiomics
+circ_heatmap_data <- select(interped_heatmap_data, 
+                            "Identifier", "Time", "Abundance", "zero_one") %>%
+  group_by(Identifier) %>%
+  mutate(peak_time = Time[Abundance == max(Abundance)]) %>%
+  ungroup()
+  
+circ_heatmap_data # view 
 
+circ_heatmap <- ggplot(data = circ_heatmap_data, 
+                       aes(x = Time, 
+                           y = fct_reorder(Identifier, peak_time, .desc = TRUE),
+                       fill = zero_one)) +
+  geom_tile() +
+    
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(breaks = scales::breaks_width(12)) +
+  scale_fill_viridis(option = "D") +
+  
+  labs(x = "Time", y = "Identifier", fill = "Normalised\nabundance") +
+  
+  coord_radial(inner.radius = 0.6, expand = FALSE) # make circular
 
+circ_heatmap
 ```
+
+```{r multiday-heatmap}
+# My attempts to stack all three days on top of each other for the heatmap
+# initial mutate line goes from 1 to 4 due to timepoints >= 120
+
+multiday_data <- circ_heatmap_data %>%
+  mutate(Day = (Time %/% 24) - 1, 
+         ZT = Time %% 24, .after = Time) %>%
+  filter(Day <= 3, .preserve = TRUE) %>% # remove timepoints after 120 for plotting
+  unite(col = "ID_day", Identifier, Day, sep = "_", remove = FALSE) %>%
+  
+  group_by(ID_day) %>%
+  mutate(peak_time = ZT[Abundance == max(Abundance)],
+         zero_one = ((Abundance - min(Abundance)) /
+      (max(Abundance) - min(Abundance)))
+      ) %>% # recalculate 0-1 normalisation and peak time per day
+  ungroup() 
+
+multiday_heatmap <- ggplot(data = multiday_data, 
+                       aes(x = ZT, 
+                           y = fct_reorder2(ID_day, peak_time, Identifier, .desc = TRUE),
+                       fill = zero_one)) +
+  geom_tile() +
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(breaks = scales::breaks_width(1)) +
+  scale_fill_viridis(option = "D") +
+  labs(x = "ZT", y = NULL, fill = "Normalised\nabundance")
+
+multiday_heatmap
+
+multiday_heatmap_circ <- ggplot(data = multiday_data, 
+                       aes(x = ZT, 
+                           y = fct_reorder2(ID_day, Identifier, peak_time, .desc = TRUE),
+                       fill = zero_one)) +
+  #geom_tile() +
+  geom_rect(aes(xmin = ZT, xmax = ZT + 0.5, 
+                ymin = stage(ID_day, after_scale = ymin-1),
+                ymax = stage(ID_day, after_scale = ymax))
+            ) +
+  geom_vline(xintercept = c(0, 12), linewidth = 0.1, alpha = 0.5) + # check the axes aren't skewed
+    
+  theme_bw() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5),
+        axis.title = element_text(size = 12)
+  ) +
+  scale_x_continuous(expand = c(0, 0), breaks = scales::breaks_width(1)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_fill_viridis(option = "D") +
+    
+  coord_radial(inner.radius = 0.6, expand = FALSE) + # make circular
+    
+  labs(x = "ZT", y = NULL, fill = "Normalised\nabundance")
+
+multiday_heatmap_circ
+```
+
+==
 
 ```{r end}
 print("End chunk")

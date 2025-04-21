@@ -69,6 +69,7 @@ rhythmic_ion_binders_full <- filter(double_rhythmics_full,
 
 rhythmic_ion_binders_full # preview outcome
 
+## time shading ----
 time_shading <- tibble(Time = seq(0, 122, 1)) %>%
   mutate(
     Condition = case_when(Time <= 24 ~ "LD", Time >= 48 ~ "LL"),
@@ -194,12 +195,12 @@ ui <- page_fillable(
               choices = c("eJTK" = "ejtk", "RAIN" = "rain", "ECHO" = "echo")
             )
           ),
-          textOutput("protein_history")
+          p("Previously-selected proteins:"), textOutput("protein_history")
         ),
         
         ### Main page ----
         mainPanel(
-          textOutput("protein_colours"),
+          #textOutput("protein_colours"),
           conditionalPanel(
             condition = "input.proteins == ''",
             p("Select a protein to get started..")
@@ -438,7 +439,7 @@ server <- function(input, output, session) {
     }
     if (input$ion_rain_echo == "echo") {
       ion_rhythm_pvalues <- filter(ions_echo_LL, Ion %in% input$ions) %>% 
-        select("Ion", "P-Value":"BY Adj P-Value")
+        select("Ion", "Oscillation Type", "Period", "P-Value":"BY Adj P-Value")
     } 
     
     ion_rhythm_pvalues
@@ -523,7 +524,7 @@ server <- function(input, output, session) {
         protein_data$Time >= 48 ~ "LL"
       ), .after = Time ) %>%
       group_by(Identifier) %>%
-      mutate(rel_abun = Abundance / max(Abundance)) %>%
+      mutate(rel_abun = Abundance / max(Abundance, na.rm = TRUE)) %>%
       ungroup() # add extra columns
   })
 
@@ -537,7 +538,8 @@ server <- function(input, output, session) {
   
   # output list as a test
   output$protein_history <- renderText({
-    paste(history$protein, collapse = ", ")
+    paste("Previously-selected proteins: \n")
+    paste(history$protein, collapse = ", \n")
     }) 
   
   
@@ -749,7 +751,7 @@ rhythmics_data <- eventReactive(input$rhythmics_go, {
     
     rhythmics_data %>%
     group_by(Identifier) %>%
-    mutate(rel_abun = Abundance / max(Abundance)) %>%
+    mutate(rel_abun = Abundance / max(Abundance, na.rm = TRUE)) %>%
     ungroup()
 })
 
