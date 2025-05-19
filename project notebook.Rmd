@@ -2,6 +2,8 @@
 title: "Plant Science Research Project Notebook"
 author: "Katie Riccio"
 output: 
+  html_notebook: 
+    toc: true
   html_document:
     theme: flatly
     toc: true 
@@ -91,29 +93,154 @@ nuc_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.
 
 org_proteome <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", sheet = 3, na = "ND", .name_repair = function(x) gsub("\\s+", "_", x)) # organellar-encoded proteome data
 
-protein_rhythm_pvalues <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx", na = "ND") %>% 
-  mutate(across(!Identifier, as.numeric)) # pre-calculated eJTK/rain/echo LD and LL p-values (names don't need fixing here)
-
 nuc_proteome # check nuclear proteome
 org_proteome # check organellar proteome
-protein_rhythm_pvalues # check rhythmicity values
+tail(org_proteome)
 ```
 
-Once these were loaded in, I used the pre-calculated *p*-values to extract only the proteins that were identified as rhythmic in LL conditions (with a threshold of *p* \< 0.05) from the full dataset.
+Once these were loaded in, I realised that the organellar proteome lacked *p*-values for RAIN and ECHO, so I calculated these myself for better comparison with the ions (as their rhythmicity was going to be assessed using these two methods, not eJTK).
+
+## Organelle proteome rhythmicity analysis
+
+```{r load-organellar-abundance}
+org_abundance <- bind_cols(
+  read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", 
+             sheet = 3, range = cell_cols("A")), # identifiers
+  read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", 
+             sheet = 3, range = cell_cols("H:O")), # LD abundance
+  read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM4_ESM.xlsx", 
+             sheet = 3, range = cell_cols("W:AR")) # LL abundance
+) # identifier and abundance values from existing data - have to bind because read_excel doesn't take non-congruous column ranges
+
+org_abundance # check abundance values
+tail(org_abundance) # check tail to spot NAs
+```
+
+### RAIN
+
+```{r org-rain-calculations}
+org_rain_table <- pivot_longer(org_abundance, cols = -Identifier,
+                              names_to = "Time", names_transform = as.numeric,
+                              values_to = "Abundance") %>%
+  pivot_wider(names_from = "Identifier", values_from = "Abundance")
+org_rain_table
+
+### LD ----
+
+org_rain_LD <- filter(org_rain_table, Time < 48) %>% select(!Time) %>% as.matrix() %>%
+  rain(period = 24, period.delta = 0, method = "independent", na.rm = TRUE, # 24-hour periods only
+       deltat = 3.5, nr.series = 1, verbose = TRUE) %>%
+  rename(LD_rain = pVal) %>% rownames_to_column("Identifier")
+
+org_rain_LD
+
+### LL ----
+org_rain_LL <- filter(org_rain_table, Time >= 48) %>% select(!Time) %>% as.matrix() %>%
+  rain(period = 24, period.delta = 4, method = "longitudinal", na.rm = TRUE, # 20- to 28-hour periods
+    deltat = 3.5, nr.series = 1, verbose = TRUE) %>% 
+  rename(LL_rain = pVal) %>% rownames_to_column("Identifier")
+
+org_rain_LL # in theory this should be accurate
+
+sig_rain_LL <- filter(org_rain_LL, LL_rain < 0.05) # filter at p < 0.05 threshold
+sig_rain_LL # 29 organellar proteins are rhythmic in LL according to RAIN
+```
+
+This identifies 29 significantly-rhythmic organelle-derived proteins.
+
+### ECHO
+
+```{r org-echo-calculations}
+org_echo_table <- org_abundance %>% drop_na() # ECHO doesn't like NAs
+org_echo_table
+
+### LD ----
+org_echo_LD <- select(org_echo_table, Identifier, "0":"24.5") %>%
+  echo_find(begin = 0, end = 24.5,
+            resol = 3.5, num_reps = 1, 
+            low = 24, high = 24, is_de_linear_trend = FALSE,
+            paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, 
+            is_smooth = FALSE, run_all_per = FALSE) %>%
+  rename(Identifier = "Gene Name", LD_echo = "P-Value")
+
+select(org_echo_LD, "Identifier", "LD_echo":"BY Adj P-Value")
+
+
+### LL ----
+org_echo_LL <- select(org_echo_table, Identifier, "48":"121.5") %>%
+echo_find(begin = 48, end = 121.5,
+          resol = 3.5, num_reps = 1, 
+          low = 20, high = 28, is_de_linear_trend = TRUE,
+          paired = FALSE, rem_unexpr = FALSE, is_normal = FALSE, 
+          is_smooth = FALSE, run_all_per = FALSE) %>%
+  rename(Identifier = "Gene Name", LL_echo = "P-Value")
+
+select(org_echo_LL, "Identifier", "LL_echo":"BY Adj P-Value")
+
+sig_echo_LL <- filter(org_echo_LL, LL_echo < 0.05) # filter at p < 0.05 threshold
+select(sig_echo_LL, "Identifier", "LL_echo":"BY Adj P-Value") # 34 organellar proteins are rhythmic in LL according to ECHO
+
+```
+
+This identifies 34 significantly-rhythmic organelle-derived proteins. 5 proteins could not have values calculated due to containing blank cells.
+
+### Saving/loading results
+
+The results of these were then saved to file.
+
+```{r org-save-pvals}
+org_pvals <- list(org_rain_LD[1:2], 
+                        select(org_echo_LD, "Identifier", "LD_echo"), 
+                        org_rain_LL[1:2], 
+                        select(org_echo_LL, "Identifier", "LL_echo")) %>% 
+  reduce(full_join, by = "Identifier") # list all identifiers + p-values, and bring into one table
+
+org_pvals # check table
+
+write_xlsx(org_pvals, "organelle_rhythmicity_pvals.xlsx") # write to file to load into tool
+```
+
+Combining all *p*-values for nuclear and organellar proteomes into one table:
+
+```{r all-pvals}
+nuc_pvals <- read_excel("Kay et al Comms Bio 2021/42003_2021_2680_MOESM5_ESM.xlsx",
+                        na = "ND") %>% mutate(across(!Identifier, as.numeric))  # pre-calculated eJTK/rain/echo LD and LL p-values
+org_pvals <- select(org_proteome, "Identifier", "LD_ejtk" = "p_val_LD", "LL_ejtk" = "p_val_LL") # pre-calculated eJTK values for organellar proteome
+my_org_pvals <- read_excel("organelle_rhythmicity_pvals.xlsx") # RAIN and ECHO p-values for organellar proteome, that I calculated
+
+all_org_pvals <- left_join(org_pvals, my_org_pvals, by = "Identifier") %>% 
+  relocate(LL_ejtk, .after = LD_echo) # combine and set correct column order
+protein_pvals <- bind_rows(nuc_pvals, all_org_pvals) # combine into one table
+
+protein_pvals # check table
+tail(protein_pvals) # check organellar values are at end of table
+```
+
+# Rhythmic proteins
+
+I used the calculated *p*-values to extract only the proteins that were identified as rhythmic in LL conditions (with a threshold of *p* \< 0.05) from the full dataset.
 
 Filtering to rhythmic proteins:
 
 ```{r filter-to-rhythmic-proteins}
-double_rhythmic_pvals <- filter(protein_rhythm_pvalues, 
+double_rhythmic_pvals <- filter(protein_pvals, 
                                 LL_rain < 0.05 & LL_echo < 0.05) # find proteins rhythmic according to both RAIN and ECHO in LL
 double_rhythmic_pvals # preview list of proteins + p-values
 
-double_rhythmics_full <- filter(nuc_proteome, Identifier %in% double_rhythmic_pvals$Identifier) # get full information for rhythmic proteins from main table
+double_rhythmics_nuc <- filter(nuc_proteome, 
+                               Identifier %in% double_rhythmic_pvals$Identifier) # get full information for rhythmic proteins from main table
 
-double_rhythmics_full # preview outcome
+double_rhythmics_org <- filter(org_proteome, 
+                               Identifier %in% double_rhythmic_pvals$Identifier) %>% rename(GeneType = Gene, description = Name) # get full information (renaming columns so they bind properly)
+
+double_rhythmics_nuc
+double_rhythmics_org # preview outcome
+
+double_rhythmics_full <- bind_rows(double_rhythmics_nuc, double_rhythmics_org) # bind to one table
+double_rhythmics_full
 ```
 
-Of the 6,599 proteins in the original dataset, 951 (14.4%) were identified as rhythmic by both RAIN and ECHO.
+Of the 6,599 nuclear-encoded proteins in the original dataset, 951 (14.4%) were identified as rhythmic by both RAIN and ECHO. Of the 75 organellar-encoded proteins, 21 (28%) were identified as rhythmic by both RAIN and ECHO.
 
 ## Rhythmic proteins with ion-related domains
 
@@ -137,7 +264,7 @@ filtered_rhythmics
 ```
 
 This identifies 9 proteins rhythmic in LL (according to both RAIN and ECHO), with domains labelled as having something to do with either magnesium or potassium.\
-However, I wanted to see if there were any more, by examining proteins known to use these ions as co-factors.
+However, I wanted to see if there were any more, by examining proteins known to use these ions as co-factors. This was particularly pertinent because the organelle-derived proteome lacked domain information.
 
 ## Proteins with Mg as a co-factor
 
@@ -150,7 +277,7 @@ mg_cofactor_table <- read_tsv("uniprotkb_cc_cofactor_chebi_CHEBI_18420_2025_03_1
 mg_cofactor_table
 ```
 
-To compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
+To compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
 Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
 
 Creating a list of all gene names and their corresponding amino acid sequences, using the nuclear and organellar proteome datasets from Kay *et al.*:
@@ -159,13 +286,13 @@ Creating a list of all gene names and their corresponding amino acid sequences, 
 # get lists of gene names and corresponding amino acid sequences from other tables
 nuc_seqs <- select(nuc_proteome, Identifier, Sequence = Amino_acid_sequence) %>% mutate(Sequence = str_remove_all(Sequence, "\\*"))
 org_seqs <- select(org_proteome, Identifier, Sequence = Amino_acid_sequence) %>% mutate(Sequence = str_remove_all(Sequence, "\\*"))
-# THESE HAVE TRAILING ASTERISKS FOR SOME REASON
+# THESE HAVE TRAILING ASTERISKS FOR SOME REASON (because of coming from ORCAE?)
 
 nuc_seqs # should have 6599 rows
 org_seqs # should have 75 rows
 
 proteome_seqs <- rbind(nuc_seqs, org_seqs) # combine into one big list for later
-
+proteome_seqs
 ```
 
 Extracting list of isolated names and sequences from the Mg2+ cofactor table:
@@ -201,7 +328,7 @@ mg_co_seqs <- unite(mg_co_joined, Identifier, !Sequence, na.rm = TRUE) %>%
 mg_co_seqs # still at 146, so all the gaps were successfully filled by combining
 ```
 
-Now that I have a cleaner list, I can update the initial table:
+Now that I have a cleaner list of identifiers, I can update the initial table:
 
 ```{r clean-mg-cofactor-table}
 mg_cofactor_table <- mutate(mg_cofactor_table, Gene_Names = mg_co_seqs$Identifier) %>% rename(Identifier = Gene_Names) # swap old column out for new one
@@ -215,20 +342,20 @@ Finding rhythmically-abundant proteins that use Mg2+ as a co-factor:
 
 ```{r mg-co-find-rhythmics}
 mg_co_rhythmics <- tibble() # initialise blank tibble to add results to
-double_rhythmics <- select(double_rhythmics_full, Identifier, Amino_acid_sequence, description, Absolute_Phase_LL, Circadian_Phase_LL, protein_domains) # get relevant columns of full table
+double_rhythmics <- select(double_rhythmics_full, Identifier, Amino_acid_sequence, description, protein_domains) # extract relevant columns from full table
 
 for (ostta in mg_co_seqs$Identifier) {
   # cat("Current identifier:",ostta,"\n\n") # test
   result <- filter(double_rhythmics, Identifier %in% ostta) # get row of rhythmics table where each identifier is
-  mg_co_rhythmics <- rbind(mg_co_rhythmics, result) # add to a new table
+  mg_co_rhythmics <- rbind(mg_co_rhythmics, result) # add to the blank tibble
 }
 
 mg_co_rhythmics # NB: derived from proteome table
 ```
 
-This identifies 16 proteins that are rhythmic in LL conditions (according to both RAIN and ECHO), and also bind Mg2+ as a co-factor.
+This identifies 17 proteins that are rhythmic in LL conditions (according to both RAIN and ECHO), and also bind Mg2+ as a co-factor.
 
-7 of them have descriptions missing, so I ran the sequences against BLAST and took the best result to get one manually.
+7 of them have descriptions missing in the proteome table, so I ran the sequences against BLAST and took the best result to get one manually.
 
 Manually filling in missing descriptions from BLAST results:
 
@@ -258,8 +385,13 @@ full_join(
 ) %>% View() # compare filled-in names to initial ones from cofactor table
 ```
 
-```{r mg-co-blast-arabidopsis, eval=FALSE, include=FALSE}
-print(unlist(c(mg_co_rhythmics$Identifier, mg_co_rhythmics$Amino_acid_sequence)))
+I wanted to view these results in an Excel file, so I wrote them to one:
+
+```{r mg-co-write-to-file, eval=FALSE, include=FALSE}
+#print(unlist(c(mg_co_rhythmics$Identifier, mg_co_rhythmics$Amino_acid_sequence)))
+
+write_xlsx(filter(mg_cofactor_table, Identifier %in% mg_co_rhythmics$Identifier),
+        "rhythmic full cofactor table.xlsx")
 ```
 
 ## Proteins with K as a co-factor
@@ -273,8 +405,8 @@ k_cofactor_table <- read_tsv("uniprotkb_cc_cofactor_chebi_CHEBI_29103_2025_03_13
 k_cofactor_table
 ```
 
-This shows 4 results. As with the Mg2+ table, to compare this list to the existing proteome data, the names need to all just be ostta numbers instead of a mixture of ostta numbers (from the ORCAE v2 genome) with an OT\_ prefix, OtC numbers (I assume from the chloroplast genome isolated in 2007), BE221 drafts, and so on.\
-Some entries also lack ostta numbers (instead having BE221DRAFT\_ s only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
+This shows 4 results. As with the Mg2+ table, to compare this list to the existing proteome data, the names need to all just be ostta numbers instead of having any OT\_ prefixes.\
+Some entries also lack ostta numbers (instead having an OT only), so that also needs resolving by searching for their amino acid sequences in the existing proteome data to get an ostta number.
 
 Checking and correcting the names:
 
@@ -304,7 +436,7 @@ k_co_seqs <- unite(k_co_joined, Identifier, !Sequence, na.rm = TRUE) %>%
 k_co_seqs # still at 4, so the missing identifier was successfully filled by combining
 ```
 
-Now that I have a cleaner list, I can update the initial table:
+Now that I have a cleaner list of identifiers, I can update the initial table:
 
 ```{r clean-k-cofactor-table}
 k_cofactor_table <- mutate(k_cofactor_table, Gene_Names = k_co_seqs$Identifier) %>% rename(Identifier = Gene_Names) # swap old column out for new one
@@ -326,35 +458,36 @@ for (ostta in k_co_seqs$Identifier) {
 k_co_rhythmics
 ```
 
-This identifies 1 protein that is rhythmic in LL conditions according to both RAIN and ECHO, and also binds K+ as a co-factor - in this case, it is a pyruvate kinase (ostta16g0040), which was already identified in the previous round of analysis because it also binds Mg2+ as a co-factor.
+This identifies 1 protein that is rhythmic in LL conditions according to both RAIN and ECHO, and also binds K+ as a co-factor - in this case, it is a pyruvate kinase (ostta16g00480), which was already identified in the previous round of analysis because it also binds Mg2+ as a co-factor.
 
 Due to this, I elected not to proceed with the k_co_rhythmics table, as it is contained within the mg_co_rhythmics table.
 
 ## Saving/loading results
 
-The tool doesn't need to re-do all of this searching every time it is run, so I will save the results to a file and load them in from that file in the tool.
+The tool doesn't need to re-do all of this searching every time it is run, so I will save the results of this analysis to a file and load them in from that file in the tool.
 
-Saving the mg_co_rhythmics table, containing the name/sequence/description/phases/protein domains, to a file:
+Saving the mg_co_rhythmics table, containing the full proteome information for the rhythmic proteins, to a file:
 
 ```{r save-rhythmic-ion-binders, eval=FALSE, include=FALSE}
 write_xlsx(mg_co_rhythmics, "mg_co_rhythmics.xlsx")
-mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx")
-mg_co_rhythmics
+
 ```
 
-Loading in the same table, containing the name/sequence/description/phases/protein domains, from a different file:
+Loading the same table back in from the file, as will be done for the tool:
 
-```{r load-rhythmic-ion-binding}
-rhythmic_ion_binders <- read_excel("rhythmic_ion-binders.xlsx", range = "A1:G17")
-rhythmic_ion_binders # this is the same as the mg_co_rhythmics table
+```{r load-rhythmic-ion-binders}
+
+mg_co_rhythmics <- read_excel("mg_co_rhythmics.xlsx")
+mg_co_rhythmics
 ```
 
 Creating a table with the full information from the proteome dataset for each of the rhythmically-abundant proteins that use Mg as a co-factor, hence referred to as rhythmic ion-binders:
 
 ```{r rhythmic-ion-binders-full}
-rhythmic_ion_binders_full <- filter(double_rhythmics_full, Identifier %in% mg_co_rhythmics$Identifier) %>%
+rhythmic_ion_binders_full <- filter(double_rhythmics_full, 
+                                    Identifier %in% mg_co_rhythmics$Identifier) %>%
   select(Identifier, Amino_acid_sequence, description, Absolute_Phase_LL, Circadian_Phase_LL, protein_domains, everything()) %>%
-  arrange(Absolute_Phase_LL) # get and reorder full table for the 16
+  arrange(Absolute_Phase_LL) # get and reorder full proteome table for the 17
 
 rhythmic_ion_binders_full
 ```
@@ -363,7 +496,7 @@ rhythmic_ion_binders_full
 
 # Ion exploration
 
-The ion abundance data is unpublished. My project focuses on magnesium, calcium, and potassium because these are the ions good-quality data was obtained for. (phosphorus is also in the file, but is not being included in my tool)
+The ion abundance data was originally presented in Gil Rodriguez *et al.*, 2024 (which is currently on bioRxiv). My project focuses on magnesium, calcium, and potassium because these are the ions good-quality data was obtained for. (phosphorus is also in the file, but is not being included in my tool)
 
 Loading in the ion abundance data:
 
@@ -381,7 +514,7 @@ ion_abundance # preview file
 
 In the tool, the values are loaded in from the spreadsheet once, and then subsections of this table are taken and formatted based on which ions the user chooses in the UI.
 
-UI from the web tool:
+Early UI from the web tool:
 
 ```{r shiny-ion-input, eval=FALSE}
 checkboxGroupInput(
@@ -520,6 +653,37 @@ ions_rain_LL
 This has identified all three ions as rhythmic in both LD and LL, interestingly enough, though Ca is much less than the other two (which makes sense).\
 Peak shape refers to the number of time points in the falling part of the oscillation - more sine-shaped oscillations will have more balanced peak shapes, but a sawtooth with a long rising and short falling shape would have a lower peak shape number.
 
+```{r inverse-method-tests, eval = FALSE}
+indep_LD <- ions_rain_LD # originals (independent LD)
+longit_LL <- ions_rain_LL # original (longitudinal LL)
+
+longit_LD <- filter(ions_rain_table, Condition == "LD") %>%
+  select(-c(Time, Condition)) %>%
+  as.matrix() %>%
+  rain(
+    period = 24, period.delta = 0, method = "longitudinal", # only 24-hour periods
+    deltat = 2, nr.series = 4, verbose = TRUE
+  ) %>% rownames_to_column("Ion") # try inverse method
+longit_LD
+
+indep_LL <- filter(ions_rain_table, Condition == "LL") %>%
+  select(-c(Time, Condition)) %>%
+  as.matrix() %>%
+  rain(
+    period = 24, period.delta = 4, method = "independent", # 22-28 hour periods
+    deltat = 2, nr.series = 4, verbose = TRUE
+  ) %>% rownames_to_column("Ion") # try inverse method
+indep_LL
+
+print("Independent method for both: ")
+indep_LD
+indep_LL
+
+print("Longitudinal method for both: ")
+longit_LD
+longit_LL
+```
+
 ### ECHO
 
 The ECHO method was implemented using the `echo.find()` function, from the package of the same name.
@@ -604,23 +768,66 @@ ions_echo_LL_to_plot <- left_join(ions_echo_LL_ori, ions_echo_LL_fit,
 )
 ions_echo_LL_to_plot
 
-echo_plot_data <- ions_echo_LL_to_plot %>% 
+echo_plot_data <- ions_echo_LL_to_plot %>% mutate(Time = as.numeric(Time)) %>%
   pivot_longer(cols = !Time, names_to = "Ion", values_to = "Abundance") %>%
   separate_wider_delim(cols = Ion, delim = "_", names = c("Ion", "Status")) %>%
   group_by(Ion, Status) %>%
   mutate(zero_one = ((Abundance - min(Abundance)) /
-    (max(Abundance) - min(Abundance))))
+    (max(Abundance) - min(Abundance)))) %>%
+  ungroup()
 
-echo_plot_data
+echo_plot_data_ori <- filter(echo_plot_data, Status == "Original") 
+echo_plot_data_fit <- filter(echo_plot_data, Status == "Fitted")
 
 echo_plot <- ggplot(data = echo_plot_data, 
-                    aes(x = Time, y = zero_one, group = interaction(Ion, Status),
-                    colour = Ion)) +
+                    aes(x = Time, y = Abundance, group = interaction(Ion, Status), colour = interaction(Ion, Status))) +
   geom_line(linewidth = 0.8) +
   geom_point() +
-  geom_point(colour = "black", shape = 21)
+  geom_point(colour = "black", shape = 21) +
+  labs(y = "Processed abundance")
 
 echo_plot
+
+echo_plot_ori <- ggplot(data = echo_plot_data_ori, 
+                    aes(x = Time, y = zero_one, group = Ion, colour = Ion)) +
+  geom_rect(
+        data = time_shading,
+        aes(
+          y = NULL, group = NULL, colour = NULL,
+          xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, fill = colour
+        ),
+        show.legend = FALSE
+      ) + # set up background
+      scale_fill_identity(time_shading$colour) + # shade appropriately
+      new_scale_fill() + # allow rest of graph to use different shading method
+  
+  geom_line(linewidth = 0.8) +
+  geom_point() +
+  geom_point(colour = "black", shape = 21) +
+  scale_x_continuous(breaks = scales::breaks_width(12), limits = c(48,97)) +
+  labs(x = "Time (h)", y = "Processed abundance")
+
+echo_plot_ori
+
+echo_plot_fit <- ggplot(data = echo_plot_data_fit, 
+                    aes(x = Time, y = Abundance, group = Ion, colour = Ion)) +
+  geom_rect(
+        data = time_shading,
+        aes(
+          y = NULL, group = NULL, colour = NULL,
+          xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, fill = colour
+        ),
+        show.legend = FALSE
+      ) + # set up background
+      scale_fill_identity(time_shading$colour) + # shade appropriately
+      new_scale_fill() + # allow rest of graph to use different shading method
+  
+  geom_line(linewidth = 0.8) +
+  geom_point() +
+  geom_point(colour = "black", shape = 21) +
+  scale_x_continuous(breaks = scales::breaks_width(12), limits = c(48,97)) +
+  labs(x = "Time (h)", y = "Processed abundance")
+echo_plot_fit
 ```
 
 ### Saving/loading results
@@ -629,7 +836,7 @@ For the Shiny tool, I have chosen to save these calculated rhythmicity values fo
 
 Saving ion rhythmicity values to an Excel file:
 
-```{r save-ion-rhythmicity, eval=FALSE}
+```{r save-ion-rhythmicity}
 ion_rhythmicity <- list(ions_rain_LD, ions_rain_LL, ions_echo_LD, ions_echo_LL) # get values as list
 names(ion_rhythmicity) <- c("ions_rain_LD", "ions_rain_LL", "ions_echo_LD", "ions_echo_LL")
 write_xlsx(ion_rhythmicity, "ion_rhythmicity.xlsx") # write each table of values to its own sheet
@@ -646,13 +853,28 @@ ion_rhythmicity <- ion_rhythmicity %>%
   set_names() %>% # set names of each variable to name of sheet
   map(read_excel, path = ion_rhythmicity) %>% # create list of pre-calculated outputs
   list2env(.GlobalEnv) # allow each output to be accessed individually, like how they went into the raw excel file in the first place
+
+ions_rain_LD
+ions_rain_LL
+ions_echo_LD
+ions_echo_LL
 ```
 
 ------------------------------------------------------------------------
 
 # Rhythmic ion-binders
 
-I want to explore the 16 proteins identified as rhythmically-abundant and also using Mg2+ as a co-factor in more detail.
+I want to explore the 17 proteins identified as rhythmically-abundant and also using Mg2+ as a co-factor in more detail.
+
+```{r}
+rhythmic_ion_binders_full # from proteome
+mg_co_rhythmics # from cofactor table
+
+mg_co_rhythmics_full <- filter(mg_cofactor_table, Identifier %in% mg_co_rhythmics$Identifier)
+mg_co_rhythmics_full
+
+write_xlsx(mg_co_rhythmics_full, "mg_co_rhythmics_full.xlsx")
+```
 
 ## Heatmaps
 
@@ -903,7 +1125,7 @@ mean_multiday_heatmap <- ggplot(data = circular_heatmap_data,
   #scale_fill_distiller(type = "div", palette = "RdBu") +
   #scale_fill_viridis(option = "D") +
     
-  labs(x = "ZT", y = "Identifier (ordered by peak time)", 
+  labs(x = "ZT", y = "Identifier", 
        fill = "Normalised\nabundance\n(n = 3)")
 
 mean_multiday_heatmap
@@ -1004,7 +1226,7 @@ peak_times <- rhythmic_abundance_iondays %>%
   mutate(zero_one = (Abundance - min(Abundance)) /
                  (max(Abundance) - min(Abundance))) # normalise to 0-1
 
-peak_times %>% arrange(Time)
+#peak_times %>% arrange(Time)
 ```
 
 ```{r trace-peaks-graph}
@@ -1052,6 +1274,63 @@ trace_peaks_graph <- ggplot(data = ion_data,
   
 
 trace_peaks_graph # show graph
+```
+
+```{r morn-eve-peaktrace-graph}
+morneve_rhythmics <- filter(circular_heatmap_data, 
+                            peak_ZT <= 3 | (peak_ZT >= 14 & peak_ZT < 21)) %>% 
+  distinct(Identifier, peak_ZT) %>% arrange(peak_ZT) %>% 
+  mutate(Time = peak_ZT + 48,
+         ToD = case_when(peak_ZT <= 3 ~ "Morning",
+                         peak_ZT >= 14 ~ "Evening"))
+
+morneve_rhythmics
+
+morneve_rhythmics_vs <- ggplot() +
+  geom_rect(data = time_shading,
+                aes(y = NULL, group = NULL,
+                    xmin = Time, xmax = Time + 1, ymin = -Inf, ymax = Inf, 
+                    fill = colour), 
+                show.legend = FALSE) + # set up background
+      scale_fill_identity(time_shading$colour) + # shade appropriately
+      new_scale_fill() + # let rest of graph use new shading
+  
+  geom_line(data = ion_data,
+  aes(x = Time, y = rel_abun, colour = Ion, group = Ion), linewidth = 0.8) +
+  geom_point(data = ion_data,
+  aes(x = Time, y = rel_abun, colour = Ion, group = Ion), shape = 4, size = 2) +
+  # geom_point(data = ion_data, 
+  # aes(x = Time, y = rel_abun), colour = "black", shape = 21) + 
+  
+  #geom_point(data = morneve_rhythmics, aes(x = Time, y = 1, colour = ToD)) +
+  new_scale_colour() +
+  
+  geom_point(data = morneve_rhythmics,
+    aes(x = Time, y = 1, colour = ToD),
+    size = 2,
+    position = position_jitter(width = 0.01, height = 0.05, seed = 9)
+    ) +
+  scale_colour_manual(values = c("Morning" = "gold2", "Evening" = "navy") ) +
+  geom_point(data = morneve_rhythmics,
+    aes(x = Time, y = 1), colour = "black", shape = 21,
+    size = 2,
+    position = position_jitter(width = 0.01, height = 0.05, seed = 9)
+    ) +
+  
+  geom_text_repel(data = morneve_rhythmics,
+            aes(x = Time, y = 1, group = ToD, label = Identifier),
+            size = 3,
+            position = position_jitter(width = 0.01, height = 0.05, seed = 9),
+            show.legend = FALSE,
+            max.overlaps = Inf, min.segment.length = 0) +
+  
+  scale_x_continuous(breaks = scales::breaks_width(12), minor_breaks = NULL,
+                     limits = c(45, 72)) + # limit only to LL
+  guides(colour = "legend", group = "legend") +
+  labs(y = "Relative abundance")
+
+morneve_rhythmics_vs
+  
 ```
 
 ===
